@@ -197,6 +197,16 @@ def mask(v):
 def main():
     env = load_env()
     target_open = env.get("LAKEKE_OPENID", "")
+
+    # 现存的 token 还有效就先不登录（小程序也是这个策略：token 没过期就复用）
+    if not (len(sys.argv) > 2 and sys.argv[2] == "force"):
+        token = env.get("LAKEKE_TOKEN", "")
+        exp = meta(token) if token else None
+        if exp and exp - time.time() > 120:
+            left = (exp - time.time()) / 60
+            print(f"[refresh] 现有 token 仍有效（还剩 {left:.0f} 分钟），跳过登录", flush=True)
+            return
+
     print(f"[refresh] 等待 {WAIT}s；目标 openId={mask(target_open) if target_open else '(未指定)'}", flush=True)
 
     end = time.time() + WAIT
