@@ -9,6 +9,8 @@
 结论：
 
 - ✅ **Windows 本机跑**：完全自动（微信在跑、辣可可开着即可），推荐挂计划任务
+- ✅ **常开 Windows 无人值守**：把这套搬到一台常开的机器上（家里旧电脑 / Windows 云主机），
+  见 [DEPLOY.md](DEPLOY.md)
 - ❌ **GitHub Actions**：token 撑不到第二天，除非你自己做 token 中继
 
 ## 签到入口的位置（容易踩）
