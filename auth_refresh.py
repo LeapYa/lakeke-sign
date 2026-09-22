@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-主动刷新凭证：在小程序逻辑层调 wx.login() 拿 jsCode → POST /auth/login 换新 token → 写 lakeke.env。
+主动刷新 token：在小程序逻辑层调 wx.login() 拿 jsCode → POST /auth/login 换新 token → 写 lakeke.env。
 
-只要微信在跑、辣可可小程序开着，就能随时拿到新鲜 token，不必等人手工抓取。
-全程不打印明文凭证，只打印长度 / exp 等元信息。
+要点（踩过的坑）：
+  1. **jsCode 必须和 mpId 配对**：辣可可与辣可可甄选同属 wuuxiang SaaS 但是两个租户
+     （辣可可 mpId=gh_6****17e8，甄选 mpId=gh_08623aa177ad）。
+     code 取自哪个小程序，就必须用那个小程序的 mpId 去换，否则报 invalid code。
+     → 本脚本在同一上下文内同时取身份 + 取 code，逐个上下文试。
+  2. 不要用 /auth/login 响应里的 openId 覆盖身份（可能是快照用户，签到会报 105）。
+  3. 目标上下文以 lakeke.env 里已有的 openId 为准。
 
 用法：python auth_refresh.py [等待秒数]
 """
@@ -15,37 +20,36 @@ import ssl
 import sys
 import time
 import threading
+import urllib.error
 import urllib.parse
 import urllib.request
-import urllib.error
 import websocket
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 ENVFILE = os.path.join(BASE, "lakeke.env")
 LOGIN_URL = "https://wechat.wuuxiang.com/i5xforyou/auth/login"
+APPID = "wxf8a17a14c0521576"
+WAIT = int(sys.argv[1]) if len(sys.argv) > 1 else 60
+
 ctx = ssl.create_default_context()
 ctx.check_hostname = False
 ctx.verify_mode = ssl.CERT_NONE
 
-WAIT = int(sys.argv[1]) if len(sys.argv) > 1 else 60
-
-LOGIN_JS = r"""
-new Promise(function (resolve) {
-  try {
-    wx.login({
-      success: function (r) { resolve(JSON.stringify({ok: true, code: r.code})); },
-      fail: function (e) { resolve(JSON.stringify({ok: false, err: String(e && e.errMsg)})); }
-    });
-  } catch (e) { resolve(JSON.stringify({ok: false, err: String(e)})); }
-})
-"""
-
-# openId/unionId/mpId 即便 token 过期也还在 storage 里
+# 同一上下文内先取身份，再取 code
 IDENT_JS = r"""
 (function () {
   var out = {};
+  // 最可靠的上下文识别方式
+  try {
+    var ai = wx.getAccountInfoSync();
+    out.appId = (ai.miniProgram && ai.miniProgram.appId) || null;
+  } catch (e) { out.appId = null; }
   function scan(o, d) {
-    if (!o || typeof o !== 'object' || d > 3) return;
+    if (!o || typeof o !== 'object' || d > 4) return;
+    if (Object.prototype.toString.call(o) === '[object Array]') {
+      for (var i = 0; i < o.length && i < 30; i++) scan(o[i], d + 1);
+      return;
+    }
     for (var k in o) {
       var v = o[k], lk = String(k).toLowerCase();
       if (typeof v === 'string' || typeof v === 'number') {
@@ -66,20 +70,33 @@ IDENT_JS = r"""
       } catch (e) {}
     });
   } catch (e) { out.__err = e.message; }
+  // 页面 data 里也可能有身份信息
+  try { (getCurrentPages() || []).forEach(function (p) { scan(p.data, 0); }); } catch (e) {}
   return JSON.stringify(out);
 })()
 """
 
-collected = {}
+LOGIN_JS = r"""
+new Promise(function (resolve) {
+  try {
+    wx.login({
+      success: function (r) { resolve(JSON.stringify({ok: true, code: r.code})); },
+      fail: function (e) { resolve(JSON.stringify({ok: false, err: String(e && e.errMsg)})); }
+    });
+  } catch (e) { resolve(JSON.stringify({ok: false, err: String(e)})); }
+})
+"""
+
+state = {"ident": {}, "code": {}, "ctx": []}
 
 
 def send(ws, cid, expr, tag, await_promise=False):
     mid = 1000 * (tag + 1) + cid
-    params = {"expression": expr, "returnByValue": True, "contextId": cid}
+    p = {"expression": expr, "returnByValue": True, "contextId": cid}
     if await_promise:
-        params["awaitPromise"] = True
+        p["awaitPromise"] = True
     try:
-        ws.send(json.dumps({"id": mid, "method": "Runtime.evaluate", "params": params}))
+        ws.send(json.dumps({"id": mid, "method": "Runtime.evaluate", "params": p}))
     except Exception:
         pass
 
@@ -93,42 +110,41 @@ def on_message(ws, data):
         msg = json.loads(data)
     except json.JSONDecodeError:
         return
-    if msg.get("method") == "Runtime.executionContextCreated":
-        cid = msg.get("params", {}).get("context", {}).get("id")
-        send(ws, cid, "typeof wx", 0)
-        return
     mid = msg.get("id")
-    if not isinstance(mid, int):
+    if not isinstance(mid, int) or mid < 1000:
         return
     tag, cid = mid // 1000 - 1, mid % 1000
     val = msg.get("result", {}).get("result", {}).get("value")
+    if not val:
+        return
     if tag == 0 and val == "object":
+        state["ctx"].append(cid)
         send(ws, cid, IDENT_JS, 1)
-        send(ws, cid, LOGIN_JS, 2, await_promise=True)
-    elif tag == 1 and val:
+    elif tag == 1:
         try:
-            collected.setdefault("ident", {}).update(json.loads(val))
+            state["ident"][cid] = json.loads(val)
         except Exception:
             pass
-    elif tag == 2 and val:
+        send(ws, cid, LOGIN_JS, 2, await_promise=True)
+    elif tag == 2:
         try:
-            collected["login"] = json.loads(val)
+            state["code"][cid] = json.loads(val)
         except Exception:
-            collected["login"] = {"raw": val[:80]}
+            pass
 
 
-def once(seconds=8):
+def collect(seconds=12):
+    state.update({"ident": {}, "code": {}, "ctx": []})
     ws = websocket.WebSocketApp("ws://127.0.0.1:62000", on_open=on_open, on_message=on_message,
                                 on_error=lambda w, e: None)
-    t = threading.Thread(target=ws.run_forever, daemon=True)
-    t.start()
+    threading.Thread(target=ws.run_forever, daemon=True).start()
     time.sleep(2)
-    for cid in range(1, 40):
-        send(ws, cid, "typeof wx", 0)
-        time.sleep(0.1)
+    for cid in range(1, 61):
+        send(ws, cid, "(typeof wx)", 0)
+        time.sleep(0.05)
     end = time.time() + seconds
-    while time.time() < end and not collected.get("login"):
-        time.sleep(0.5)
+    while time.time() < end and len(state["code"]) < len(state["ctx"]):
+        time.sleep(0.3)
     try:
         ws.close()
     except Exception:
@@ -140,30 +156,12 @@ def meta(token):
         p = token.split(".")[1]
         p += "=" * (-len(p) % 4)
         d = json.loads(base64.urlsafe_b64decode(p))
-        exp = d.get("exp")
-        return {"len": len(token), "fields": list(d.keys()), "exp": exp}
+        return d.get("exp")
     except Exception:
-        return {"len": len(token), "fields": None, "exp": None}
+        return None
 
 
-def main():
-    print(f"[refresh] 等待 {WAIT}s 连接小程序 ...", flush=True)
-    end = time.time() + WAIT
-    while time.time() < end and not collected.get("login"):
-        once()
-        time.sleep(2)
-
-    ident = collected.get("ident", {})
-    login = collected.get("login", {})
-    print(f"[refresh] storage 身份: mpId={'有' if ident.get('mpId') else '无'} "
-          f"openId={'有' if ident.get('openId') else '无'}", flush=True)
-    if not login.get("ok"):
-        print(f"[FAIL] wx.login 失败: {login.get('err') or login}")
-        sys.exit(1)
-
-    code = login["code"]
-    print(f"[refresh] 拿到 jsCode（长度 {len(code)}，不打印）", flush=True)
-    mp_id = ident.get("mpId", "")
+def try_login(code, mp_id):
     body = urllib.parse.urlencode({"code": code, "mpid": mp_id}).encode()
     req = urllib.request.Request(LOGIN_URL, data=body, method="POST", headers={
         "Content-Type": "application/x-www-form-urlencoded",
@@ -176,73 +174,83 @@ def main():
     })
     try:
         with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
-            resp = json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        raw = e.read().decode(errors="replace") if e.fp else ""
-        print(f"[FAIL] /auth/login HTTP {e.code}: {raw[:200]}")
-        sys.exit(1)
+            return json.loads(r.read().decode())
     except Exception as e:
-        print(f"[FAIL] /auth/login 异常 {e}")
-        sys.exit(1)
+        return {"status": -1, "message": str(e)}
 
-    print(f"[refresh] /auth/login status={resp.get('status')} message={resp.get('message')}", flush=True)
-    result = resp.get("result")
-    print(f"[refresh] result 类型={type(result).__name__} "
-          f"字段={list(result.keys()) if isinstance(result, dict) else result}", flush=True)
 
-    # 递归找 token / openId / unionId / mpId
-    picked = {}
-
-    def grab(o, d=0):
-        if not isinstance(o, (dict, list)) or d > 4:
-            return
-        items = o.items() if isinstance(o, dict) else enumerate(o)
-        for k, v in items:
-            lk = str(k).lower()
-            if isinstance(v, str) and v:
-                if lk in ("token", "authorization", "accesstoken") and "token" not in picked:
-                    picked["token"] = v
-                if lk in ("openid",) and "openId" not in picked:
-                    picked["openId"] = v
-                if lk in ("unionid",) and "unionId" not in picked:
-                    picked["unionId"] = v
-                if lk in ("mpid", "mp_id") and "mpId" not in picked:
-                    picked["mpId"] = v
-                if lk in ("gcid",) and "gcId" not in picked:
-                    picked["gcId"] = v
-            else:
-                grab(v, d + 1)
-
-    grab(resp)
-    token = picked.get("token", "")
-    if not token:
-        print("[FAIL] 响应里没有 token")
-        sys.exit(1)
-    m = meta(token)
-    exp = m["exp"]
-    if exp:
-        left = (exp * 1000 - time.time() * 1000) / 60000
-        exp_str = datetime.datetime.fromtimestamp(exp).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[refresh] 新 token len={m['len']} fields={m['fields']} exp={exp_str}（{left:.0f} 分钟后）", flush=True)
-    else:
-        print(f"[refresh] 新 token len={m['len']}（非 JWT 或无 exp）", flush=True)
-
+def load_env():
     env = {}
     if os.path.exists(ENVFILE):
         for line in open(ENVFILE, encoding="utf-8"):
             if "=" in line:
                 k, v = line.strip().split("=", 1)
                 env[k] = v
-    # 只更新 token；身份信息一律沿用 storage（/auth/login 可能带回快照用户的 openId，
-    # 用它去签到会报 105 memberId与openId不一致）
+    return env
+
+
+def mask(v):
+    s = str(v)
+    return f"{s[:4]}{'*' * max(0, len(s) - 8)}{s[-4:]} ({len(s)})" if len(s) > 8 else "*" * len(s)
+
+
+def main():
+    env = load_env()
+    target_open = env.get("LAKEKE_OPENID", "")
+    print(f"[refresh] 等待 {WAIT}s；目标 openId={mask(target_open) if target_open else '(未指定)'}", flush=True)
+
+    end = time.time() + WAIT
+    got = None
+    while time.time() < end and not got:
+        collect()
+        pairs = [(c, state["ident"].get(c, {}), state["code"].get(c, {})) for c in state["ctx"]]
+        for cid, ident, codeinfo in pairs:
+            if not codeinfo.get("ok"):
+                continue
+            app_id = ident.get("appId")
+            # 只认辣可可小程序的上下文（甄选是同一个 SaaS 的另一个租户）
+            if app_id and app_id != APPID:
+                print(f"[try] ctx {cid}: appId={app_id} 跳过（不是辣可可）", flush=True)
+                continue
+            mp = ident.get("mpId") or env.get("LAKEKE_MPID", "")
+            print(f"[try] ctx {cid}: appId={app_id} mpId={mask(mp)} openId={mask(ident.get('openId', ''))}", flush=True)
+            if target_open and ident.get("openId") and ident["openId"] != target_open:
+                print("      跳过（不是目标账号）", flush=True)
+                continue
+            if not mp:
+                print("      跳过（拿不到 mpId）", flush=True)
+                continue
+            resp = try_login(codeinfo["code"], mp)
+            status = resp.get("status")
+            ok = status == 0 and isinstance(resp.get("result"), dict)
+            print(f"      /auth/login status={status} {'' if ok else resp.get('message')}", flush=True)
+            if ok:
+                got = (ident, resp["result"])
+                break
+        if not got:
+            time.sleep(3)
+
+    if not got:
+        print("[FAIL] 未能换到 token：确认目标账号的辣可可小程序是开着的", flush=True)
+        sys.exit(1)
+
+    ident, result = got
+    token = result.get("token", "")
+    exp = meta(token)
+    if exp:
+        left = (exp * 1000 - time.time() * 1000) / 60000
+        print(f"[refresh] 新 token len={len(token)} exp="
+              f"{datetime.datetime.fromtimestamp(exp):%Y-%m-%d %H:%M:%S}（{left:.0f} 分钟后）", flush=True)
+
+    # 只更新 token；身份沿用 storage（响应里的 openId 可能是快照用户）
     env["LAKEKE_TOKEN"] = token
-    for k, v in (("LAKEKE_MPID", mp_id), ("LAKEKE_OPENID", ident.get("openId")),
+    for k, v in (("LAKEKE_MPID", ident.get("mpId")), ("LAKEKE_OPENID", ident.get("openId")),
                  ("LAKEKE_UNIONID", ident.get("unionId")), ("LAKEKE_GCID", ident.get("gcId"))):
         if v:
-            env[k] = v
+            env[k] = str(v)
     with open(ENVFILE, "w", encoding="utf-8") as f:
         f.write("\n".join(f"{k}={v}" for k, v in env.items() if v) + "\n")
-    print(f"[save] 已更新 {ENVFILE}（字段：{sorted(env)}）", flush=True)
+    print(f"[save] 已更新 {ENVFILE}", flush=True)
 
 
 if __name__ == "__main__":

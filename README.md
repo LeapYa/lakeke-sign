@@ -11,14 +11,33 @@
 - ✅ **Windows 本机跑**：完全自动（微信在跑、辣可可开着即可），推荐挂计划任务
 - ❌ **GitHub Actions**：token 撑不到第二天，除非你自己做 token 中继
 
+## 签到入口的位置（容易踩）
+
+签到**不在辣可可主小程序里**。真实路径是：
+
+```
+辣可可甄选（wxb98e6393065cf180）首页轮播图
+        ↓ 点击
+辣可可（wxf8a17a14c0521576）pages/sign/index
+        ↓
+立即签到
+```
+
+直接打开辣可可进不到签到页——启动参数（gameId 等）是甄选那边跳转带过来的。
+
+对自动化来说这反而无所谓：`gameId` 是长活动常量（活动期到 2028-01），`memberId/cardId/cardNo` 可以用 `/api/member/single` 直接查，所以**日常签到不需要进签到页，只要辣可可小程序开着（任意页面）即可**。
+
 ## 原理
 
 | 环节 | 地址 |
 |---|---|
 | 登录 | `wechat.wuuxiang.com/i5xforyou/auth/login`（jsCode → token，form-urlencoded） |
+| 会员信息 | `scrm.wuuxiang.com/crm7game-api/api/member/single`（空 data 即可，返回 memberId/cardId/cardNo） |
 | 签到 | `scrm.wuuxiang.com/crm7game-api/api/game/sign/signIn` |
 
 请求统一包一层：`{mpId, openId, unionId, data:{...}}`，鉴权走 `Authorization` 头 + `crm7-mpId` 头（可选 `csl-GC-Shardingkey`）。
+
+> ⚠️ 甄选和辣可可**同属 wuuxiang SaaS 但是两个租户**（辣可可 mpId `gh_6****17e8`，甄选 mpId `gh_08623aa177ad`）。jsCode 由哪个小程序产生，就必须配哪个的 mpId 去换 token，否则 `invalid code`。`auth_refresh.py` 已按 `wx.getAccountInfoSync().miniProgram.appId` 挑上下文。
 
 响应码（实测）：
 
@@ -54,23 +73,15 @@ pip install websocket-client cryptography
 
 ### 2. 一键签到
 
-先启动 WMPFDebugger，再打开辣可可小程序进「可可会员签到」页，然后：
+先启动 WMPFDebugger，再打开辣可可小程序（**任意页面即可，不用走甄选轮播图**），然后：
 
 ```powershell
 python sign_now.py
 ```
 
-脚本会先从小程序里取出参数写入 `lakeke.env`（终端只显示脱敏摘要），然后立刻调用签到接口。
+脚本会先 `wx.login` 换一个新 token，再用 token 调签到接口。全程不需要手工抓包、不需要点任何按钮。
 
-### 3. 只刷新 token（不重开签到页）
-
-`auth_refresh.py` 会在小程序里调 `wx.login()`，拿 jsCode 去换一个新 token 写进 `lakeke.env`。身份信息（openId/unionId/mpId）沿用 storage，**不要**用登录响应里带回的 openId——那可能是快照用户，签到会报 `105 memberId与openId不一致`。
-
-```powershell
-python auth_refresh.py
-```
-
-### 4. 挂计划任务（可选）
+### 3. 挂计划任务（可选）
 
 Windows 任务计划程序里新建任务，`python <路径>\sign_now.py`，每天一个时间触发。前提是那时微信在跑、辣可可小程序已打开。
 
