@@ -1,134 +1,220 @@
-# 部署方案：Linux 服务器（无人值守）
+# Linux 容器无人值守部署（首推方案）
 
-> Windows 方案见 [DEPLOY.md](DEPLOY.md)。两种方案的共同前提是：**签到凭证必须在微信里现取现用**
-> （jsCode 只能由微信客户端产生，token 只有 1~2 小时且服务端实测校验 `exp`）。
-> 区别只在于「让微信一直开着」这件事放在哪个系统上做。
+> 这是本项目的**首选部署方式**。Windows 本机方案见 [DEPLOY.md](DEPLOY.md)（备选，机器要一直开着）。
+> 本文所有步骤都是**实测跑通**的（2026-09-23，见文末「实测记录」），不是推演。
 
-## 一、为什么值得认真考虑 Linux
+## 为什么首推 Linux 容器
 
-| 点 | Windows 方案 | Linux 方案 |
+| 对比项 | Linux 容器 | Windows 本机 |
 |---|---|---|
-| 系统成本 | 需要 Windows 授权，云主机更贵 | Linux VPS 便宜得多（可 Docker） |
-| 图形会话 | RDP 断开会挂起会话，微信掉线，要额外保活 | 无头跑 Xvfb 即可，不依赖远程桌面 |
-| **微信版本** | **自动更新**，一升级 WMPF 偏移全失效，得重新反汇编 | **deb/AppImage 手动装，不自动更新** → 版本可以钉住，偏移长期有效 |
-| 偏移配置 | win32 有 53 个版本可选 | linux 目前只有 3 个（14910 / 14978 / 25665），版本必须落在这三个里 |
-| 风控 | 数据中心 IP + Server 指纹 | 同样机房 IP，风险相当 |
+| 微信会自己升级吗 | **不会**（手动装 deb，可把 WMPF 版本钉住） | 会，一升级 WMPF 偏移全失效、要重逆 |
+| 无人值守 | 服务器常开即可 | 你的电脑得一直开着 |
+| 环境干净 | 全在容器里，删了就干净 | 装一堆东西在本机 |
+| 风控 | 住宅 IP（放家里）最稳；机房 IP 风险稍高 | 本机 IP 天然干净 |
 
-**关键前提：微信 Linux 版 4.0 起完整支持 PC 小程序**（含支付），也就是说 Linux 上确实存在
-WMPF 运行时，可以 hook。官方下载页：<https://linux.weixin.qq.com/>（提供 deb / rpm / AppImage，
-x86_64 / arm64 / LoongArch）。
+共同前提：**签到凭证必须在微信里现取现用**（jsCode 只能由微信客户端产生；token 1~2 小时且服务端实测校验 `exp`）。
 
-## 二、版本必须是「那三个之一」
+## 0. 载体怎么选（先决定这个）
 
-WMPFDebugger 的 Linux 偏移配置只有三份：
+| 载体 | 风控风险 | 成本 | 建议 |
+|---|---|---|---|
+| **家里旧笔记本 / 迷你主机 / NAS** | **最低**（住宅 IP + 真实硬件指纹） | 电费 ¥10~30/月 | ⭐ 首选 |
+| Windows 云主机 + WSL2/Docker | 中高（机房 IP + Server 指纹） | 促销 ¥50~100/年起 | 方便，但用小号试 |
+| 云手机 / 安卓容器 + RPA | 中高 | ¥30~100/月 | 最重，不推荐 |
 
-```
-frida/config/linux/addresses.14910.json
-frida/config/linux/addresses.14978.json
-frida/config/linux/addresses.25665.json
-```
+> ⚠️ **强烈建议先用小号跑通再上主号。** 微信风控看的是 IP + 设备指纹；
+> 容器本身不改变这两样，真正的风险变量是**机房 IP**。
 
-启动 hook 时日志会打印实际版本，例如 `[frida] script loaded, WMPF version: 25665`。
-
-- **落在三个之一** → 直接能跑
-- **不在** → 要么换一个微信 Linux 版安装包（因为它不自动更新，可以挑版本），
-  要么参考项目 README 自己用 IDA 逆 `flue.so`（成本高）
-- Linux 版实现会在二进制里正则提取版本号，不需要你手工查
-
-## 二·补、容器化部署要选对项目（风控）
-
-如果打算用 Docker 跑（而不是裸机装），别只看 star 数，**风控对抗差别很大**：
-
-| 方案 | 风控对抗 | 说明 |
-|---|---|---|
-| **云微 WechatOnCloud**（3805★） | ⭐⭐⭐⭐⭐ | 唯一内置完整设备伪装：唯一持久 machine-id、真实 hostname、移除 `/.dockerenv`、真实 MAC、os-release 伪装 deepin；还支持「重置设备 ID」 |
-| wechat-selkies（3044★） | ⭐⭐ | 只有数据持久化，未见 machine-id/dockerenv/os-release 处理；可自己补（linuxserver 镜像支持 `/custom-cont-init.d` 钩子） |
-| ricwang/docker-wechat（990★） | ⭐ | 镜像小、微信版本新（4.1.13.23），但无设备伪装实现 |
-
-细节与逐项证据见 [CONTAINER-OPTIONS.md](CONTAINER-OPTIONS.md)。
-
-> 另外，容器方案要接我们的签到脚本，还必须能挂 frida：
-> `--cap-add=SYS_PTRACE --security-opt seccomp=unconfined`。
-
-## 三、部署步骤（Ubuntu 22.04/24.04 x86_64，2C4G 起）
-
-### 1. 装微信
+## 1. 装 Docker
 
 ```bash
-# 官方页面选对应架构的包；社区常用的直链如下（以官网为准）
-wget https://dldir1v6.qq.com/weixin/Universal/Linux/WeChatLinux_x86_64.deb
-sudo apt install -y ./WeChatLinux_x86_64.deb
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER && newgrp docker
+docker version
 ```
 
-无头服务器需要图形环境（微信是 GUI 程序）：
+## 2. 部署微信实例（云微 WechatOnCloud）
+
+云微是目前唯一**内置完整设备伪装**的项目（三个项目逐项对比见 [CONTAINER-OPTIONS.md](CONTAINER-OPTIONS.md)）：
 
 ```bash
-sudo apt install -y xvfb x11vnc
-Xvfb :1 -screen 0 1080x1920x24 &
-export DISPLAY=:1
-wechat &          # 首次需要手机扫码登录：截二维码图发到手机扫
+mkdir -p ~/woc && cd ~/woc
+curl -fsSLO https://raw.githubusercontent.com/Gloridust/WechatOnCloud/main/docker-compose.yml
 ```
 
-> 也可以直接装轻量桌面（xfce），再配 x11vnc，效果更直观。
+编辑 `docker-compose.yml`：**删掉 `- /dev:/host-dev:ro`**（无摄像头时不需要，某些环境挂载会失败）。
 
-### 2. 登录并打开一次辣可可
+建 `.env`：
 
-扫码登录后，打开辣可可小程序一次（任意页面即可）。之后保持微信常驻不退出。
-
-### 3. 装 Node + WMPFDebugger
-
-```bash
-node --version      # 需要 >= 22
-git clone https://github.com/evi0s/WMPFDebugger.git && cd WMPFDebugger
-npm install --ignore-scripts --registry https://registry.npmmirror.com
-
-# 手动放 frida 的 Linux 预编译包（版本号按 npm 实际装的 frida 版本改）
-curl -L -o frida.tar.gz \
-  https://github.com/frida/frida/releases/download/17.18.0/frida-v17.18.0-napi-v8-linux-x64.tar.gz
-tar -xzf frida.tar.gz -C node_modules/frida/build --strip-components=1
-node -e "require('frida'); console.log('frida OK')"
+```dotenv
+WOC_PASSWORD=<面板管理员密码>
+WOC_HTTP_PORT=36080
+WOC_SPOOF_OS=1
+# 关键：默认内存软阈值 1500MiB 太低，跑起小程序会超，看门狗会「柔和重启」实例，
+#       而重启 = 微信掉登录（要手机确认）+ hook 容器被连坐带走
+WOC_INSTANCE_MEM_SOFT_MB=4000
+WOC_INSTANCE_MEM_HARD_MB=6000
 ```
 
-### 4. 起 hook，确认版本
-
 ```bash
-npx ts-node src/index.ts     # 看日志里的 WMPF version
+docker compose up -d
 ```
 
-### 5. 部署签到脚本
+> **坑 1**：若 `docker compose` 报 WSL 相关错误（Windows 上会遇到），改用等价的 `docker run` 起面板，
+> 并**必须给面板和实例指定同一个自定义网络**——默认 bridge **没有容器名 DNS**，而面板是按容器名反代实例的，
+> 结果就是进实例时一直「桌面长时间未就绪」：
+> ```bash
+> docker network create woc-net
+> docker run -d --name woc-panel --network woc-net -p 36080:8080 \
+>   -v ~/woc/data-panel:/data -v /var/run/docker.sock:/var/run/docker.sock \
+>   -e PORT=8080 -e WOC_DOCKER_NETWORK=woc-net \
+>   -e WOC_WECHAT_IMAGE=docker.io/gloridust/wechat-on-cloud:1.4.9 \
+>   -e PANEL_ADMIN_USER=admin -e PANEL_ADMIN_PASSWORD=<密码> \
+>   -e WOC_SPOOF_OS=1 -e WOC_INSTANCE_MEM_SOFT_MB=4000 -e WOC_INSTANCE_MEM_HARD_MB=6000 \
+>   -e TZ=Asia/Shanghai --restart unless-stopped gloridust/woc-panel:latest
+> ```
+
+浏览器打开 `http://<机器IP>:36080` → admin / 密码登录 → 新建「微信实例」→ 等镜像拉完、微信自动装好
+→ 进实例 → 手机扫码登录。
+
+**登录后校验设备伪装**（应看到唯一 machine-id、像个人电脑的 hostname、`/.dockerenv` 已移除、真实 OUI 的 MAC）：
 
 ```bash
-git clone https://github.com/LeapYa/lakeke-sign.git && cd lakeke-sign
-pip install websocket-client
-python sign_now.py           # 会自动 wx.login 换 token → 签到
+docker exec <实例容器名> sh -c 'cat /etc/machine-id; hostname; \
+  [ -e /.dockerenv ] && echo "dockerenv 还在(未伪装)" || echo "dockerenv 已移除 ✓"; \
+  cat /sys/class/net/eth0/address; grep PRETTY_NAME /etc/os-release'
 ```
 
-第一次会失败（小程序要在 hook 启动之后重新打开），重开一次辣可可再跑。
+## 3. 在小程序里走一遍（人工，只做一次）
 
-### 6. 定时任务
+微信窗口里：搜索 **辣可可甄选** → 打开 → 点首页那个 **「每日积分签到」大轮播图**
+→ 弹「即将打开 辣可可现炒黄牛肉」→ 允许 → 落到辣可可签到页。
+
+这一步必要：小程序要被打开过一次，之后 `wx.login` 才有上下文可用。
+
+## 4. 挂 hook（旁挂容器，不动云微的实例）
+
+云微建的实例**没有 `CAP_SYS_PTRACE`**，frida attach 不了。所以旁挂 helper 容器与实例共享命名空间：
 
 ```bash
+WX=<实例容器名>                # 例 woc-wx-2ada0225ca
+VOL=woc-data-${WX#woc-wx-}     # 云微的数据卷名
+
+docker run -d --name woc-hook \
+  --pid=container:$WX \
+  --network=container:$WX \
+  --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+  -v <lakeke-sign 的父目录>:/work -v $VOL:/config:ro \
+  node:22-slim sleep infinity
+```
+
+> 两个 `--pid` / `--network` **都必须是 `container:`**。
+> 只共享 PID 不共享网络的话，小程序连不上 `ws://localhost:9421`（那是实例自己 netns 里的地址），
+> hook 日志永远不会出现 `[miniapp] connected`。
+
+装 WMPFDebugger + Linux 版 frida：
+
+```bash
+git clone --depth 1 https://github.com/evi0s/WMPFDebugger.git
+docker exec woc-hook sh -c '
+  mkdir -p /opt/wmpf && cd /work/WMPFDebugger
+  cp -r src package.json tsconfig.json frida /opt/wmpf/
+  cd /opt/wmpf
+  npm i --ignore-scripts --registry=https://registry.npmmirror.com --no-audit --no-fund
+  mkdir -p node_modules/frida/build
+  curl -fsSL -o /tmp/f.tar.gz https://github.com/frida/frida/releases/download/17.18.0/frida-v17.18.0-napi-v8-linux-x64.tar.gz
+  tar -xzf /tmp/f.tar.gz -C node_modules/frida/build --strip-components=1
+  cp -r /work/WMPFDebugger/node_modules/frida/build/src node_modules/frida/build/   # 见下方说明
+  node -e "console.log(require(\"frida\").version)"
+'
+docker commit woc-hook woc-hook:1   # 固化，之后重建不必重装
+docker exec -d woc-hook sh -c 'cd /opt/wmpf && node node_modules/ts-node/dist/bin.js src/index.ts > /tmp/wmpf.log 2>&1'
+docker exec woc-hook tail -5 /tmp/wmpf.log   # 期望：[frida] script loaded, WMPF version: 25665
+```
+
+> `npm i --ignore-scripts` 会跳过 frida 的 install 脚本，**JS 包装层不会被生成**，
+> 所以要把 Windows 那份 clone 里现成的 `node_modules/frida/build/src` 拷过去补上（Linux 的 `.node` 用下载的）。
+>
+> **WMPF 版本必须落在 `frida/config/linux/` 的配置里**（当前 14910 / 14978 / 25665）。
+> 微信 Linux 4.1.13 实测是 **25665**。版本不对就换微信 deb 版本，或等上游加配置。
+
+## 5. 落地脚本 + 配置
+
+把 `lakeke-sign/` 放到上面 `-v` 挂载的目录下：
+
+```bash
+cd lakeke-sign
+docker cp cdp_lakeke_ident.js woc-hook:/work/lakeke-sign/
+docker exec woc-hook sh -c 'cd /work/lakeke-sign && NODE_PATH=/opt/wmpf/node_modules node cdp_lakeke_ident.js 60'
+```
+
+它会严格按 `appId=wxf8a17a14c0521576` + `mpId=gh_6420f1a617e8` 双重校验挑上下文，
+把整组身份（token/openId/unionId/gcId/gameId）写进 `lakeke.env`。
+
+> ⚠️ **别跨账号复用同一个 `lakeke.env`**：token 换成 B 账号、openId 还是 A 的，接口会返 `208 授权码错误`。
+> 判断方法：JWT 的 `sub` 就是该账号在辣可可下的 openId，与 env 里的 openId 一比就知道串没串。
+
+## 6. 定时（cron）
+
+```bash
+chmod +x lakeke-sign/daily.sh
 crontab -e
-# 每天 08:00，先确保 DISPLAY 与微信在线
-0 8 * * * cd /root/lakeke-sign && DISPLAY=:1 /usr/bin/python3 sign_now.py >> sign.log 2>&1
+5 8 * * * LAKEKE_PYTHON=/usr/bin/python3 LAKEKE_NOTIFY_ALWAYS=1 bash ~/lakeke-sign/daily.sh
 ```
 
-失败告警：`sign_now.py` 失败时退出码为 1，可在脚本后加 `|| <推送命令>`。
+`daily.sh` 每次会：检查 docker / 实例容器 / hook 容器（缺 hook 自动重建）→ 检查辣可可小程序上下文
+（不在就调 `reopen_miniapp.py` 自动重开一次）→ 刷新 token（未过期自动跳过）→ 签到 →
+按 `RESULT=<code>` 判定 → 通知。
 
-## 四、稳定性要点
+## 7. 通知渠道
 
-1. **不要升级微信**。Linux 版不自动更新正是它的优势；升级包一装，WMPF 版本一变，偏移就失效。
-2. **Xvfb 常驻**。写进 systemd 或 `@reboot` crontab，保证 DISPLAY 一直在。
-3. **微信常驻**。掉登录要手机重扫，尽量减少退出频率。
-4. **版本对不上时**先换微信安装包，别急着逆 `flue.so`。
+`notify.py` 多渠道 fan-out（配了哪个发哪个），搬自 Rainyun-Qiandao 那套，含它踩过的坑：
 
-## 五、风险提示
+| 渠道 | 环境变量 | 关键坑 |
+|---|---|---|
+| 企业微信机器人 | `WECOM_WEBHOOK` | markdown 上限 4096B；机器人限 20 条/分钟 |
+| PushPlus | `PUSHPLUS_TOKEN` | 成功码 `200`；会员 10 万字、**实名只有 2 万字**（脚本自动降级重试） |
+| WXPusher | `WXPUSHER_APP_TOKEN` + UIDS/TOPIC_IDS | 成功码是 **1000**，不是 200 |
+| 钉钉机器人 | `DINGTALK_ACCESS_TOKEN` +（可选）`DINGTALK_SECRET` | 判定 `errcode=0`；**开了加签必须带 timestamp+sign**，否则 310000 |
+| 邮件 | `SMTP_HOST/PORT/USER/PASS/TO` | 465 走 SSL，其它端口自动试 STARTTLS |
+| 通用 webhook | `LAKEKE_NOTIFY_URL` | POST JSON `{title, text, msgtype}` |
 
-与 Windows 方案同源：长期挂机运行 + 机房 IP，微信《软件许可及服务协议》不欢迎这种用法，
-风控可能要求重新验证甚至限制功能。**建议用小号试验，不要用主力号。**
+- 内容按**多版本 + 降级链**准备（full → lite → summary），各渠道按自身字节上限挑第一个不超限的；
+  全超限则做 **UTF-8 安全截断**（不会把汉字截半）。
+- 一个渠道失败不影响其它渠道。
+- `LAKEKE_NOTIFY_ALWAYS=1` 让**成功也发一条**（推荐，否则无法确认它还在跑）。
 
-## 六、选型建议
+## 8. 故障对照表
 
-- 手边有闲置笔记本/台式机 → 用 **Windows（DEPLOY.md）**，住宅 IP 风险最低，成本也最低
-- 想要省事、便宜、可容器化、且能钉住版本 → 用 **Linux（本文）**
-- 两者取 token 的逻辑完全一样，`lakeke-sign` 的脚本跨平台通用（只用 Python 标准库 + websocket-client）
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `RESULT=208 / 211` | token 失效或身份串了 | 跑 `auth_refresh_node.js` 强制刷新；确认 env 的 openId 与 JWT `sub` 一致 |
+| `RESULT=401` | 该账号还不是会员 | 跑 `lakeke_register.py`（API 优先，见 README） |
+| `RESULT=402` | 会员卡不可用 | 去小程序看卡状态 |
+| `RESULT=105` | 缺参数 / openId 与 memberId 不一致 | 清掉 `lakeke.env` 身份字段重抓（`cdp_lakeke_ident.js`） |
+| 实例「桌面长时间未就绪」 | 面板与实例不在同一自定义网络 | 见 §2 坑 1 |
+| 微信突然要重新登录 | 实例被看门狗重启（内存超软阈值） | 调高 `WOC_INSTANCE_MEM_SOFT_MB`；重启导致的掉登录无法避免 |
+| hook 反复被杀 | 实例重启 → 共享 PID 的 helper 被连坐 | `bash hook_up.sh` 重建；或依赖 `daily.sh` 自愈 |
+| 没有 `[frida] script loaded` | WMPF 版本无对应偏移配置 | 核对微信版本与 `frida/config/linux/addresses.*.json` |
+| 小程序上下文查不到 | 小程序被关掉了 | `daily.sh` 会自动重开；不在甄选首页时会明确报错（不瞎点） |
+
+## 9. 维护
+
+- **别手动重启实例容器**（会掉登录，要手机确认）。改配置后先看 `docker logs <面板>` 里的
+  `[watchdog] 已启用 · soft=... hard=...` 是否符合预期。
+- 微信 Linux 版不自动更新，**别随便升级**；升级前先确认新版本 WMPF 有偏移配置。
+- 日志 `lakeke-sign/daily.log`（追加式），截图 `shots/`。
+- 备份 `lakeke.env` 与云微数据卷（`woc-data-*`），换机可直接恢复登录态。
+
+## 附：实测记录（2026-09-23）
+
+- 云微面板 v1.4.9 + `wechat-on-cloud:1.4.9`（微信 Linux 4.1.13.23，WMPF **2.5.6.25665**）
+- 设备伪装逐项实测：machine-id `f95c8dbc…`（唯一）、hostname `lenovo-pc-841`、
+  `/.dockerenv` 已移除、MAC `00:21:cc:cd:fe:03`（真实 OUI）、os-release `deepin 23`
+- hook：`[frida] script loaded, WMPF version: 25665` → `[miniapp] miniapp client connected`
+- 两个小程序 appid 包落地，签到页 `pages/sign/index` 可读；`wx.login` 换到 110 分钟有效 token
+- **真实签到成功**（小号，新注册会员）：界面「签到成功 · 获得 1 积分 · 已连续签到 1 天」，
+  `member/single` 401 → 200，重跑得 `415 今日已签到`
+- 无人值守：`daily.sh` 全流程通过（hook 就绪 → 小程序在线 → token 就绪 → R=415）
+- 已知缺陷：该小程序**没做 PC 横屏适配**（界面被拉伸），但功能可用；
+  屏幕切到 1280x1024 时竖版排版正常（`xrandr -s 1280x1024`）

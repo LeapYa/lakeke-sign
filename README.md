@@ -8,15 +8,47 @@
 
 结论：
 
-- ✅ **Windows 本机跑**：完全自动（微信在跑、辣可可开着即可），推荐挂计划任务
-- ✅ **常开 Windows 无人值守**：把这套搬到一台常开的机器上（家里旧电脑 / Windows 云主机），
+- ⭐ **Linux 容器无人值守（首推）**：微信 Linux 4.1.13 + 云微容器 + WMPFDebugger hook，
+  全链路已实测跑通（含真实签到成功）。Linux 版微信**不自动更新**，能把 WMPF 版本钉住（25665），
+  恰好治了 Windows 方案「微信一升级偏移全失效」的老毛病。部署见 **[DEPLOY-LINUX.md](DEPLOY-LINUX.md)**
+- ✅ **常开 Windows 无人值守**：把这套搬到一台常开的 Windows（家里旧电脑 / 云主机），
   见 [DEPLOY.md](DEPLOY.md)
-- ✅ **Linux 服务器无人值守**：微信 Linux 版 4.0 起支持 PC 小程序，可配 WMPFDebugger 的 linux
-  偏移配置（14910 / 14978 / 25665）；Linux 版微信不自动更新，反而能把 WMPF 版本钉住，
-  见 [DEPLOY-LINUX.md](DEPLOY-LINUX.md)
+- ✅ **Windows 本机跑**：完全自动（微信在跑、辣可可开着即可），适合先试水
 - ❌ **GitHub Actions**：已实测否掉。同一个 token 在 09-23 02:45 还返回 `200`，
   到 13:12 变成 `208 授权码错误` —— **服务端确实校验 JWT 的 exp**，
   token 活不过当天，塞进 Secret 等于废纸
+
+## 三分钟上手（Linux 容器）
+
+```bash
+# 0) 装 Docker，然后按 DEPLOY-LINUX.md 部署云微 + 微信实例 + 扫码登录
+# 1) 挂 hook（旁挂容器，共享实例 PID/网络命名空间）
+bash hook_up.sh                      # 重建 helper + 起 WMPFDebugger + 校验
+# 2) 抓身份（容器内跑，Windows 连不到实例 netns 里的 62000）
+docker exec woc-hook sh -c 'cd /work/lakeke-sign && \
+  NODE_PATH=/opt/wmpf/node_modules node cdp_lakeke_ident.js 60'
+# 3) 一键：自检 → 自愈 → 刷新 token → 签到 → 通知
+bash lakeke-sign/daily.sh
+```
+
+配置项见 [`.env.example`](.env.example)（复制成 `lakeke.env`，已被 .gitignore 忽略）。
+
+## 通知渠道
+
+`notify.py` 多渠道 fan-out，配了哪个发哪个（搬自 Rainyun-Qiandao 那套，含它的踩坑经验）：
+
+| 渠道 | 环境变量 | 关键坑 |
+|---|---|---|
+| 企业微信机器人 | `WECOM_WEBHOOK` | markdown 上限 4096B；机器人限 20 条/分钟 |
+| PushPlus | `PUSHPLUS_TOKEN` | 成功码 `200`；会员 10 万字、**实名只有 2 万字**（脚本自动降级重试） |
+| WXPusher | `WXPUSHER_APP_TOKEN` + UIDS/TOPIC_IDS | 成功码是 **1000**，不是 200 |
+| 钉钉机器人 | `DINGTALK_ACCESS_TOKEN` +（可选）`DINGTALK_SECRET` | 判定 `errcode=0`；**开了加签必须带 timestamp+sign** |
+| 邮件 | `SMTP_HOST/PORT/USER/PASS/TO` | 465 走 SSL，其它端口自动试 STARTTLS |
+| 通用 webhook | `LAKEKE_NOTIFY_URL` | POST JSON `{title,text,msgtype}` |
+
+内容按**多版本 + 降级链**准备（full → lite → summary），各渠道按自身字节上限挑第一个不超限的，
+全超限则做 **UTF-8 安全截断**（不会把汉字截半）；一个渠道失败不影响其它渠道。
+`LAKEKE_NOTIFY_ALWAYS=1` 可让成功也发一条。
 
 ## Linux 容器路线：已实测跑通（含真实签到成功）
 

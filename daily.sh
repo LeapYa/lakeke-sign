@@ -10,7 +10,11 @@
 # 环境变量（可选）：
 #   WOC_INSTANCE       微信实例容器名，默认 woc-wx-2ada0225ca
 #   LAKEKE_PYTHON      Windows 侧 python 路径
-#   LAKEKE_NOTIFY_URL  失败告警 webhook（企业微信机器人那种，POST {"msgtype":"text",...}）
+#   通知渠道（配了哪个就发哪个，全走 notify.py，按渠道限额自动降级）：
+#     WECOM_WEBHOOK / PUSHPLUS_TOKEN / WXPUSHER_APP_TOKEN(+UIDS/TOPIC_IDS)
+#     DINGTALK_ACCESS_TOKEN(+DINGTALK_SECRET) / SMTP_HOST,PORT,USER,PASS,TO
+#     LAKEKE_NOTIFY_URL（通用 webhook）
+#   LAKEKE_NOTIFY_ALWAYS=1   成功也发一条（默认只在失败时发）
 set -u
 export PATH="/usr/bin:/bin:$PATH"
 export MSYS_NO_PATHCONV=1
@@ -20,13 +24,18 @@ cd "$WS"
 INSTANCE="${WOC_INSTANCE:-woc-wx-2ada0225ca}"
 HOOK="${WOC_HOOK:-woc-hook}"
 PY="${LAKEKE_PYTHON:-C:/Users/tingjian/.workbuddy/binaries/python/envs/default/Scripts/python.exe}"
-NOTIFY="${LAKEKE_NOTIFY_URL:-}"
+NOTIFY_ALWAYS="${LAKEKE_NOTIFY_ALWAYS:-0}"
+NOTIFY_PY="$WS/lakeke-sign/notify.py"
 LOG="$WS/lakeke-sign/daily.log"
 
 log()  { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
-alarm(){ [ -n "$NOTIFY" ] && curl -s -m 10 -X POST -H 'Content-Type: application/json' \
-         -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"$1\"}}" "$NOTIFY" >/dev/null 2>&1; }
-die()  { log "FAIL: $1"; alarm "辣可可签到失败：$1"; exit 1; }
+# 通知走 notify.py：多渠道 fan-out + 按各渠道字节限额降级（企业微信 4KB / 钉钉 2 万字…）
+notify(){ "$PY" "$NOTIFY_PY" --title "$1" --text "$2" --status "${3:-ok}" >>"$LOG" 2>&1 \
+          || log "通知发送失败（不影响签到本身）"; }
+die()  { log "FAIL: $1"
+         notify "❌ 辣可可签到失败" "$1
+时间: $(date '+%F %T')   主机: $(hostname)" fail
+         exit 1; }
 
 cdp() { docker exec "$HOOK" sh -c "cd /work/lakeke-sign && NODE_PATH=/opt/wmpf/node_modules node cdp_eval.js \"$1\" ${2:---wait 14}" 2>&1; }
 
@@ -66,10 +75,20 @@ OUT="$("$PY" -u lakeke-sign/lakeke_run.py 2>&1)"
 echo "$OUT" >>"$LOG"
 R="$(echo "$OUT" | grep -oE '^RESULT=[0-9]+' | tail -1 | cut -d= -f2)"
 case "${R:-none}" in
-  200)     log "签到成功（R=200）" ;;
-  415)     log "今日已签到（R=415，正常）" ;;
+  200)     RMSG="签到成功（+积分）" ;;
+  415)     RMSG="今日已签到（正常，无需重复签）" ;;
   401|402) die "会员问题（R=$R）：不是会员或卡不可用" ;;
   208|211) die "token 被拒（R=$R）—— 检查小程序上下文是不是真在辣可可" ;;
   *)       die "签到返回异常 R=${R:-无}：$(echo "$OUT" | tail -2 | tr '\n' ' ')" ;;
 esac
+log "$RMSG（R=$R）"
+
+# 5. 可选：成功也汇报一条（便于确认无人值守还在正常跑）
+if [ "$NOTIFY_ALWAYS" = "1" ]; then
+  MINFO="$("$PY" lakeke-sign/member_info.py 2>/dev/null | tail -1)"
+  notify "✅ 辣可可签到" "$RMSG
+${MINFO:+$MINFO}
+结果码: R=$R
+时间: $(date '+%F %T')   主机: $(hostname)" ok
+fi
 log "===== 结束 ====="
