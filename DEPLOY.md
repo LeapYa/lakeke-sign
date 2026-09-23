@@ -1,8 +1,10 @@
-# 部署方案：常开 Windows（无人值守）
+# 部署方案：Windows
 
-> 为什么需要一台常开的 Windows：辣可可的 token 是短效 JWT（1~2 小时），而换 token 必须调
-> `wx.login()`，这个 API 只能在微信客户端里执行。所以签到任务必须跑在一台**开着微信**的
-> Windows 上。GitHub Actions 上做不到（Linux 没有微信运行时）。
+> 首推方案是 Linux 容器，见 [DEPLOY-LINUX.md](DEPLOY-LINUX.md)。本文覆盖两种情况：
+> 手上有闲置 Windows 机器想利用起来，或者先在本机跑通、确认账号和链路可用。
+>
+> 为什么必须有一台开着微信的机器：辣可可的 token 是短效 JWT（1~2 小时），而换 token 必须调
+> `wx.login()`，这个 API 只能在微信客户端里执行，纯云端（GitHub Actions）做不到。
 
 ## 一、先选载体（按推荐度排序）
 
@@ -66,7 +68,15 @@ node -e "require('frida'); console.log('frida OK')"
 pip install websocket-client
 git clone https://github.com/LeapYa/lakeke-sign.git
 cd lakeke-sign
+Copy-Item .env.example lakeke.env
 ```
+
+`lakeke.env` 里按需填两项（其余可留空，脚本会自己写身份和 token）：
+
+- `LAKEKE_REGISTER_PHONE`：账号还不是会员时，注册用哪个手机号（走 API，不弹窗）
+- 通知渠道：`WECOM_WEBHOOK` / `PUSHPLUS_TOKEN` / `DINGTALK_ACCESS_TOKEN` / `SMTP_*` 任一
+
+> `LAKEKE_PYTHON` 不用管，那是给 Linux 上的 `daily.sh` 用的。
 
 ### 4. 跑通一次
 
@@ -81,6 +91,13 @@ python sign_now.py
 ```
 
 看到 `[1/2] detail code=200` + `[2/2] signIn code=200 或 415` 就算通了（415 = 今天已签）。
+
+如果报 `401`（还不是会员）或 `105`（缺参数），说明这个账号还没在辣可可注册过会员，
+填好 `LAKEKE_REGISTER_PHONE` 后跑一次：
+
+```powershell
+python lakeke_register.py
+```
 
 ### 5. 配成无人值守
 
@@ -101,10 +118,20 @@ WMPFDebugger 用「触发器 → 登录时」，勾选「不管用户是否登�
 
 **c) 失败告警**（可选但强烈建议）
 
-云主机上没人看着，失败必须让你知道。最省事的是在脚本外面套一层，失败时发邮件/推送到手机：
+云主机上没人看着，失败必须让你知道。用项目自带的 `notify.py`（渠道在 `lakeke.env` 里配）：
 
 ```powershell
-python sign_now.py; if ($LASTEXITCODE -ne 0) { <发通知> }
+# 签到 + 失败告警，写在同一条计划任务里
+python sign_now.py
+if ($LASTEXITCODE -ne 0) {
+  python notify.py --title "辣可可签到失败" --text "退出码 $LASTEXITCODE，见本机日志" --status fail
+}
+```
+
+想在成功时也收一条（便于确认它还在跑），把最后一行换成无条件推送：
+
+```powershell
+python notify.py --title "辣可可签到" --text "退出码 $LASTEXITCODE" --status ok
 ```
 
 （`sign_now.py` 失败时退出码为 1，且日志会打印 `::error::` 字样，便于采集。）

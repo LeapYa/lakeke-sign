@@ -118,7 +118,7 @@ docker run -d --name woc-hook \
   --pid=container:$WX \
   --network=container:$WX \
   --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
-  -v <lakeke-sign 的父目录>:/work -v $VOL:/config:ro \
+  -v ~/lakeke:/work -v $VOL:/config:ro \
   node:22-slim sleep infinity
 ```
 
@@ -154,12 +154,23 @@ docker exec woc-hook tail -5 /tmp/wmpf.log   # 期望：[frida] script loaded, W
 
 ## 5. 落地脚本 + 配置
 
-把 `lakeke-sign/` 放到上面 `-v` 挂载的目录下：
+脚本放在上面 `-v ~/lakeke:/work` 对应的目录里，**保持 `lakeke-sign/` 这一层**
+（取参脚本把 `lakeke.env` 写到 `/work/lakeke-sign/`）：
 
 ```bash
-cd lakeke-sign
-docker cp cdp_lakeke_ident.js woc-hook:/work/lakeke-sign/
+git clone --depth 1 https://github.com/LeapYa/lakeke-sign.git /tmp/ls
+mkdir -p ~/lakeke/lakeke-sign
+cp -r /tmp/ls/. ~/lakeke/lakeke-sign/
+
+cd ~/lakeke/lakeke-sign
+cp .env.example lakeke.env      # 按需填：LAKEKE_REGISTER_PHONE、通知渠道等
+```
+
+抓身份写入 `lakeke.env`：
+
+```bash
 docker exec woc-hook sh -c 'cd /work/lakeke-sign && NODE_PATH=/opt/wmpf/node_modules node cdp_lakeke_ident.js 60'
+cat ~/lakeke/lakeke-sign/lakeke.env      # 脱敏看字段是否齐全
 ```
 
 它会严格按 `appId=wxf8a17a14c0521576` + `mpId=gh_6420f1a617e8` 双重校验挑上下文，
@@ -167,6 +178,12 @@ docker exec woc-hook sh -c 'cd /work/lakeke-sign && NODE_PATH=/opt/wmpf/node_mod
 
 > ⚠️ **别跨账号复用同一个 `lakeke.env`**：token 换成 B 账号、openId 还是 A 的，接口会返 `208 授权码错误`。
 > 判断方法：JWT 的 `sub` 就是该账号在辣可可下的 openId，与 env 里的 openId 一比就知道串没串。
+
+新账号（从没在辣可可注册过会员）先注册一次，填好 `LAKEKE_REGISTER_PHONE` 后：
+
+```bash
+python3 lakeke_register.py      # 已经是会员会直接跳过
+```
 
 ## 6. 定时（cron）
 

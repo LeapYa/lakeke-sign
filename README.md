@@ -3,58 +3,33 @@
 辣可可（小炒黄牛肉）微信小程序「可可会员签到」的自动签到：每天 +1 积分，连续 10/20 天有加赠。
 脚本在小程序逻辑层直接调 `wx.login()` 续 token，不用手工抓包，也不用点界面。**已实测跑通，包含一次真实签到成功。**
 
-## 怎么部署（结论）
+## 走哪条路
 
 |  | 方案 | 说明 |
 |---|---|---|
-| ⭐ | **Linux 容器无人值守** | **首推**。微信 Linux 版不自动升级，WMPF 版本能钉住（25665），绕开「微信一升级偏移全失效」的老问题。→ [DEPLOY-LINUX.md](DEPLOY-LINUX.md) |
+| ⭐ | **Linux 容器**（首推） | 微信 Linux 版不自动升级，WMPF 版本能钉住（25665），绕开「微信一升级偏移全失效」的老问题。→ [DEPLOY-LINUX.md](DEPLOY-LINUX.md) |
 | ✅ | **青龙面板** | 已在用青龙的话顺手：用它现成的定时任务、环境变量、日志、通知。→ [DEPLOY-QINGLONG.md](DEPLOY-QINGLONG.md) |
-| ✅ | 常开 Windows 无人值守 | 搬到一台常开的 Windows（家里旧电脑 / 云主机）。→ [DEPLOY.md](DEPLOY.md) |
-| ✅ | Windows 本机跑 | 适合先试水，机器开着就行 |
+| ✅ | **Windows**（常开机器或本机） | 家里旧电脑 / Windows 云主机，或先在本机试水。→ [DEPLOY.md](DEPLOY.md) |
 | ❌ | GitHub Actions | 不可行，原因见下 |
 
-**资源占用**（实测）：内存约 **1.9 GiB**（微信实例 1.2 G 空闲 / 1.8 G 跑起小程序，hook 0.47 G，面板 0.12 G），
-磁盘约 **6 GB**；建议 **2 核 4 GiB** 起步，单核会卡。
+不确定选哪个的话：先用 Windows 本机方案跑一次（约 20 分钟），确认账号和链路可用，再决定放哪台机器上长期跑。
 
 **为什么 GitHub Actions 不可行**：token 是短效 JWT，实测 110 分钟（有效期由服务端下发时决定，会变），
 且服务端确实校验 `exp`——同一个 token 在 09-23 02:45 还返回 `200`，到 13:12 就成了 `208 授权码错误`。
 而 jsCode 只能由微信客户端产生、服务端没有 refresh 接口，所以必须有个微信环境现取现用。
 
-## 从这里开始
+**资源占用**（实测）：内存约 **1.9 GiB**（微信实例 1.2 G 空闲 / 1.8 G 跑起小程序，hook 0.47 G，面板 0.12 G），
+磁盘约 **6 GB**；建议 **2 核 4 GiB** 起步，单核会卡。
 
-### 第一步：先在本机跑通（Windows，约 20 分钟）
-
-目的只有一个：确认你的账号和链路可用。
-
-按 **[DEPLOY.md](DEPLOY.md)** 的「二、部署步骤」走，最后跑：
-
-```powershell
-python sign_now.py
-```
-
-看到 `code=200`（签到成功）或 `code=415`（今日已签）就说明通了。
-
-### 第二步：正式部署（无人值守）
-
-按 **[DEPLOY-LINUX.md](DEPLOY-LINUX.md)** 走，全部步骤都是实测过的；装完挂 cron 就结束了。
-想用常开 Windows 也行，见 [DEPLOY.md](DEPLOY.md)。
-
-### 第三步：确认它每天在跑
-
-```bash
-bash lakeke-sign/daily.sh
-```
-
-输出形如 `hook 就绪 → 小程序在线 → token 就绪 → 今日已签到（R=415，正常）`。
-失败会按配置的渠道推通知；把 `LAKEKE_NOTIFY_ALWAYS=1` 打开则成功也推一条。
+> 三篇部署文档**互相独立**，选一篇从头看到尾即可，不需要来回跳。里面有重复内容是刻意的。
 
 ## 文档
 
 | 文档 | 什么时候看 |
 |---|---|
-| [DEPLOY-LINUX.md](DEPLOY-LINUX.md) | **部署（首推）**：Linux 容器无人值守，含载体选型、资源占用、故障对照表 |
-| [DEPLOY-QINGLONG.md](DEPLOY-QINGLONG.md) | 用青龙面板调度（适合已在用青龙的人） |
-| [DEPLOY.md](DEPLOY.md) | 部署（Windows 备选）、成本参考、为什么不能用 GitHub Actions |
+| [DEPLOY-LINUX.md](DEPLOY-LINUX.md) | 部署（首推）：Linux 容器 + cron，含载体选型、资源占用、故障对照表 |
+| [DEPLOY-QINGLONG.md](DEPLOY-QINGLONG.md) | 部署：青龙面板调度，含容器装配与定时任务 |
+| [DEPLOY.md](DEPLOY.md) | 部署：Windows（常开机器 / 本机），含成本参考 |
 | [CONTAINER-OPTIONS.md](CONTAINER-OPTIONS.md) | 选容器项目时看：三个项目的设备伪装能力逐项对比 |
 | [NOTES.md](NOTES.md) | 接口、响应码、签到入口位置、参数怎么取 |
 | [.env.example](.env.example) | 所有配置项，复制成 `lakeke.env` 用 |
@@ -62,7 +37,7 @@ bash lakeke-sign/daily.sh
 ## 配置
 
 ```bash
-cp .env.example lakeke.env     # 然后按注释填，全部可选项都在里面
+cp .env.example lakeke.env     # 每篇部署文档里也有对应的配置步骤
 ```
 
 最常要填的两个：
@@ -72,7 +47,7 @@ cp .env.example lakeke.env     # 然后按注释填，全部可选项都在里�
 
 ## 脚本清单
 
-**取参 / 续凭证**（都在 hook 容器里跑，`NODE_PATH=/opt/wmpf/node_modules`）
+**取参 / 续凭证**（Linux 方案里跑在 hook 容器内，需 `NODE_PATH=/opt/wmpf/node_modules`）
 
 | 文件 | 用途 |
 |---|---|
@@ -101,7 +76,7 @@ cp .env.example lakeke.env     # 然后按注释填，全部可选项都在里�
 
 | 文件 | 用途 |
 |---|---|
-| `daily.sh` | 每日入口：自检 → 自愈 → 刷新 → 签到 → 通知 |
+| `daily.sh` | 每日入口：自检 → 自愈 → 刷新 → 签到 → 通知；`--ensure-only` 只保活不签到 |
 | `hook_up.sh` | 重建旁挂 hook 容器并起 WMPFDebugger |
 | `reopen_miniapp.py` | 小程序被关掉时自动重开（从甄选首页轮播图进） |
 | `notify.py` | 多渠道通知，按各渠道字节上限自动降级 |
@@ -118,7 +93,7 @@ cp .env.example lakeke.env     # 然后按注释填，全部可选项都在里�
 ## 已知限制
 
 - token 1~2 小时过期（服务端校验 `exp`），jsCode 只能由微信客户端产生，所以纯云端跑不了，
-  必须有微信环境现取现用。详见 [DEPLOY.md](DEPLOY.md) 第五节。
+  必须有微信环境现取现用。
 - 辣可可小程序没做 PC 横屏适配，界面被拉伸；功能可用，屏幕切到 1280x1024 时排版正常。
 - 首次注册会员要过一次手机号授权。若提供明文手机号可直接调注册接口，不必点界面。
 - 只在微信 Linux 4.1.13（WMPF 25665）容器 与 Windows 桌面版上实测过。
