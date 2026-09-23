@@ -8,14 +8,21 @@
 //       node cdp_eval.js "wx.exitMiniProgram(); 'bye'"
 //       node cdp_eval.js "'ok'" --any
 //
-// 退出码：0 = 找到上下文并执行成功；2 = 没找到目标上下文
+//   node cdp_eval.js --probe [期望appId]     # 只报告「当前打开的小程序是谁」，不执行表达式
+//     输出一行 APPID=<id>（多个用逗号分隔），并在命中期望 appId 时退出 0、否则退出 2。
+//     这是**与界面形态无关**的判据：不管小程序是独立窗口还是窗口内嵌，appId 都读得到。
+//     用法示例（判断现在开的是不是辣可可）：
+//       node cdp_eval.js --probe wxf8a17a14c0521576 && echo 是辣可可
+//
+// 退出码：0 = 找到上下文并执行成功（--probe 时为命中期望）; 2 = 没找到目标上下文; 3 = 表达式异常
 const WebSocket = require('ws');
 
 const LAKEKE = 'wxf8a17a14c0521576';
 const argv = process.argv.slice(2);
 if (!argv.length) { console.error('用法: node cdp_eval.js <表达式> [appId] [--promise] [--wait s] [--any]'); process.exit(1); }
-const expr = argv[0];
-const flags = argv.slice(1);
+const probeMode = argv[0] === '--probe';
+const expr = probeMode ? null : argv[0];
+const flags = probeMode ? argv.slice(1) : argv.slice(1);
 const any = flags.includes('--any');
 const awaitPromise = flags.includes('--promise');
 const waitIdx = flags.indexOf('--wait');
@@ -26,6 +33,7 @@ const PORT = Number(process.env.CDP_PORT || 62000);
 const ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
 let target = 0;
 let done = false;
+const found = new Set();          // --probe：收集所有小程序的 appId
 
 function finish(code) {
   if (done) return;
@@ -46,6 +54,10 @@ ws.on('open', () => {
     }, c * 35);
   }
   setTimeout(() => {
+    if (probeMode) {
+      console.log(`APPID=${[...found].join(',')}`);
+      process.exit(found.has(appId) ? 0 : 2);
+    }
     if (!target) { console.error(`[cdp] 没找到目标上下文（appId=${any ? '任意' : appId}）`); finish(2); }
     else {
       ws.send(JSON.stringify({ id: 5001, method: 'Runtime.evaluate',
@@ -60,6 +72,7 @@ ws.on('message', (d) => {
   const id = m.id;
   if (typeof id === 'number' && id > 1000 && id < 2000) {
     const v = m.result && m.result.result && m.result.result.value;
+    if (typeof v === 'string' && v) found.add(v);
     if (!target && ((any && v) || v === appId)) { target = id - 1000; console.error(`[cdp] 命中上下文 ctx ${target} appId=${v}`); }
     return;
   }

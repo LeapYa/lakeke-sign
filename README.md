@@ -79,7 +79,7 @@ WMPFDebugger + Frida hook 微信小程序运行时，通过 CDP 在逻辑层读 
 |---|---|
 | `cdp_lakeke_ident.js` | 抓整组身份写入 `lakeke.env`（按 appId+mpId 双重校验上下文） |
 | `auth_refresh_node.js` | 调 `wx.login` 换新 token（未过期自动跳过） |
-| `cdp_eval.js` | 通用 CDP 执行器，在指定小程序上下文里跑 JS；也当健康检查 |
+| `cdp_eval.js` | 通用 CDP 执行器，在指定小程序上下文里跑 JS；也当健康检查。`--probe` 只报告**当前打开的小程序 appId**（与界面形态无关的身份判据） |
 | `capture_reqs.js` | 给 `wx.request` 挂钩子，列出小程序真实调用的接口 |
 | `cdp_get_params_node.js` | 早期取参脚本（从页面 data 取 memberId 等，已被 ident 版取代） |
 
@@ -102,13 +102,13 @@ WMPFDebugger + Frida hook 微信小程序运行时，通过 CDP 在逻辑层读 
 
 | 文件 | 用途 |
 |---|---|
-| `daily.sh` | 每日入口：自检 → 自愈 → 刷新 → 签到 → 通知；`--ensure-only` 只保活不签到 |
+| `daily.sh` | 每日入口：自检 → 自愈 → 刷新 → 签到 → 通知；`--ensure-only` 只保活不签到。小程序在不在按 **appId** 判（`--probe`），与界面形态无关 |
 | `hook_up.sh` | 重建旁挂 hook 容器并起 WMPFDebugger |
 | `check_wmpf.sh` | 校验实例的 WMPF 版本有没有对应偏移配置（只读，不影响登录态） |
 | `auto_offsets.sh` | WMPF 版本漂了时，一条命令重算偏移并装进 WMPFDebugger（引擎在 [offsets/](offsets/)） |
 | `fetch_wechat_deb.sh` | 按版本下载并校验微信 Linux 安装包，用来把微信钉在已知可用的那一版 |
 | `switch_wechat_version.sh` | 在实例里切换 / 回滚微信版本（符号链接秒切，随时可切回） |
-| `reopen_miniapp.py` | 小程序被关掉时自动重开（小程序面板搜索 → 回车 → 点结果卡片，用窗口标题验证）。**按微信 Linux 版界面写的**，Windows 版入口不同、不能直接照搬 |
+| `reopen_miniapp.py` | 小程序被关掉时自动重开（小程序面板搜索 → 回车 → 点结果卡片，用窗口标题即时确认）。**入口路径按微信 Linux 版界面写的**，Windows 版入口不同、不能直接照搬；`--loose` 时「点了但没法用标题确认」返回 4，交给外层按 appId 复核 |
 | `hook_patch.sh` | 给 WMPFDebugger 打两个本地补丁：`hook.js` 补场景号 1183、`linux.ts` 补老版本的版本号探测回退 |
 | `notify.py` | 多渠道通知，按各渠道字节上限自动降级 |
 

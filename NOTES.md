@@ -149,6 +149,27 @@ WMPF 25715+ 上 `Network` 域不转发事件（`Network.enable` 有回复，但�
 所以想拿辣可可的 token，必须让**辣可可那个 appid 的小程序**处于打开状态。这也是历史 bug
 `invalid code` 的成因：code 取自甄选上下文、却用辣可可的 mpId 去换。
 
+### 判据分两层（别混在一起）
+
+| | 依赖什么 | 微信改版时 |
+|---|---|---|
+| **入口定位**（点哪个按钮、在哪输入、点哪张卡） | 具体界面布局 | **要跟着改**，见上面「界面流程」 |
+| **身份确认**（现在开的是不是辣可可） | **appId**（`wx.getAccountInfoSync().miniProgram.appId`） | **不用改** —— 与窗口形态无关 |
+
+所以自动化里的「打开成功」判据，最终一律落到 appId：
+
+```bash
+# 当前打开的小程序是谁（打印 APPID=wxf8a17a14c0521576；没开小程序则 APPID= 为空）
+docker exec woc-hook sh -c 'cd /work/lakeke-sign && NODE_PATH=/opt/wmpf/node_modules \
+  node cdp_eval.js --probe'
+# 命中期望 appId 时退出码 0，否则 2 —— 可以直接 if 判断
+```
+
+`daily.sh` 就是这么做的（先 `--probe`，不在才重开，重开后再 `--probe` 复核）。
+`reopen_miniapp.py` 的窗口标题判据只是**点完后的即时确认**，所以它带 `--loose`：
+点了候选但没能用标题确认时返回 4（而不是 3），把最终判断权交给 appId ——
+这样将来小程序不再独立开窗（Windows 新版已经是窗口内右侧栏），也不会被误判成「打开失败」。
+
 另一个实测结论：`wx.navigateToMiniProgram`（从小程序里直接跳到另一个小程序）**不能自动化**——
 需要真实用户点击手势，程序调用返回 `navigateToMiniProgram:fail can only be invoked by user TAP gesture`。
 所以「打开辣可可」这一步只能走 UI（`reopen_miniapp.py`），脚本按顺序试这几条：

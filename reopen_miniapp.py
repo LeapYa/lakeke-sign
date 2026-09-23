@@ -27,8 +27,17 @@
     面板/小程序会再也打不开，只能重启微信。要关就点微信自己的按钮。
   · 判断不了就**不点**，存截图返回非 0
 
-用法（容器内）：python3 reopen_miniapp.py [--check]
-退出码：0 已打开；3 没打开（截图在 /tmp/shots）
+用法（容器内）：python3 reopen_miniapp.py [--check] [--loose]
+退出码：0 已打开；3 没打开（截图在 /tmp/shots）；4 点过候选但无法用窗口标题确认
+        —— `--loose` 模式下如此返回，交给外层用 `cdp_eval.js --probe` 按 appId 复核。
+
+判据分两层（这层专管「点哪里」，身份确认交给 appId）
+  · 本脚本的**入口定位与点击**依赖具体界面布局（见上文路径 A–F），微信改版就要跟着改；
+  · 「打开的是不是辣可可」这件事，最终以 **appId** 为准：
+    `node cdp_eval.js --probe wxf8a17a14c0521576`（读 `wx.getAccountInfoSync()`），
+    它与窗口形态无关 —— 小程序以后不再独立开窗也照样能确认。
+    加 `--loose` 时本脚本在「点了但没等到目标窗口」的情况下返回 4 而不是 3，
+    就是为了让外层走这条 appId 复核，别把「界面形态变了」误判成「打开失败」。
 """
 import os
 import re
@@ -38,6 +47,12 @@ import time
 
 DISPLAY = os.environ.get("DISPLAY", ":1")
 SHOT_DIR = os.environ.get("SHOT_DIR", "/tmp/shots")
+
+# 宽松模式：点过候选卡片、但没能用窗口标题确认时，返回 4（而不是 3）让外层按 appId 复核。
+# 用途：万一微信改成「小程序不独立开窗」（Windows 新版已经是窗口内右侧栏），
+# 窗口标题这条判据会失效，但打开动作其实可能已经成功 —— 此时不该硬判失败。
+LOOSE = "--loose" in sys.argv
+TOUCHED = [False]        # 是否点过候选卡片（用单元素列表，省去到处 global 声明）
 WANT_W, WANT_H = 1280, 1024
 
 # 目标小程序：打开后窗口标题里会出现这个名字。
@@ -351,6 +366,7 @@ def panel_search_once(W, H):
             tried.append((cx, cy))
             progress = True
             print("[reopen] 点卡片 (%d,%d)" % (cx, cy))
+            TOUCHED[0] = True
             click(cx, cy, 4.0)
             wid, title = find_target_window()
             if wid:
@@ -576,6 +592,7 @@ def open_via_search(W, H):
         baseline = {wid for wid, _ in windows()}
         for i, y in enumerate(rows[:6], 1):
             print("[reopen] 第%d轮 试第 %d 行 y=%d" % (round_no, i, y))
+            TOUCHED[0] = True
             click(int(W * 0.28), y, 3.0)
             wid, title = find_target_window()
             if wid:
@@ -672,6 +689,10 @@ def main():
         return 0
 
     p = png(W, H, "reopen_fail.png")
+    if LOOSE and TOUCHED[0]:
+        print("[reopen] 点过候选卡片但没等到目标窗口（界面形态可能变了）→ 返回 4，"
+              "请用 `node cdp_eval.js --probe` 按 appId 复核，截图 %s" % p)
+        return 4
     print("[reopen] 没能打开 → 截图 %s（需人工打开一次）" % p)
     return 3
 

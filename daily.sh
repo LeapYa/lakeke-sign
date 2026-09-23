@@ -25,6 +25,7 @@ INSTANCE="${WOC_INSTANCE:-woc-wx-2ada0225ca}"
 HOOK="${WOC_HOOK:-woc-hook}"
 PY="${LAKEKE_PYTHON:-C:/Users/tingjian/.workbuddy/binaries/python/envs/default/Scripts/python.exe}"
 NOTIFY_ALWAYS="${LAKEKE_NOTIFY_ALWAYS:-0}"
+APPID_EXPECT="${LAKEKE_APPID:-wxf8a17a14c0521576}"   # 辣可可小程序的 appId（身份判据）
 NOTIFY_PY="$WS/lakeke-sign/notify.py"
 LOG="$WS/lakeke-sign/daily.log"
 
@@ -38,6 +39,10 @@ die()  { log "FAIL: $1"
          exit 1; }
 
 cdp() { docker exec "$HOOK" sh -c "cd /work/lakeke-sign && NODE_PATH=/opt/wmpf/node_modules node cdp_eval.js \"$1\" ${2:---wait 14}" 2>&1; }
+
+# 当前打开的是哪个小程序 —— 打印 appId 列表（逗号分隔）。空 = 一个小程序都没开。
+# 这是**与界面形态无关**的身份判据（读 wx.getAccountInfoSync），小程序将来不再独立开窗也成立。
+probe_appid() { docker exec "$HOOK" sh -c 'cd /work/lakeke-sign && NODE_PATH=/opt/wmpf/node_modules node cdp_eval.js --probe' 2>/dev/null | sed -n 's/^APPID=//p' | tail -1; }
 
 log "===== 开始 ====="
 
@@ -55,15 +60,26 @@ docker exec "$HOOK" grep -q "script loaded" /tmp/wmpf.log 2>/dev/null || {
 log "hook 就绪"
 
 # 2. 小程序在不在（不在就自动重开一次）
-if ! cdp '"1"' >/dev/null 2>&1; then
-  log "辣可可小程序不在，尝试自动重开"
-  docker cp lakeke-sign/reopen_miniapp.py "$INSTANCE":/tmp/reopen_miniapp.py >/dev/null 2>&1
-  docker exec -e DISPLAY=:1 "$INSTANCE" python3 /tmp/reopen_miniapp.py >>"$LOG" 2>&1 \
-    || log "重开脚本返回非 0（截图见 shots/reopen_*.png，多半是面板搜索没打开成功）"
-  sleep 6
-  cdp '"1"' >/dev/null 2>&1 || die "小程序不在且自动重开失败（看 shots/reopen_*.png；注意目标号是「辣可可现炒黄牛肉i」）"
-fi
-log "小程序在线"
+#    判据用 **appId**：读小程序逻辑层的 wx.getAccountInfoSync()，与窗口形态无关。
+#    「窗口标题」只用于 reopen 内部点完后的即时确认，不作最终判据。
+APPID="$(probe_appid)"
+case "$APPID" in
+  *"$APPID_EXPECT"*) log "小程序在线（appId=$APPID）" ;;
+  *)
+    log "目标小程序不在（当前 appId=${APPID:-无}），尝试自动重开"
+    docker cp lakeke-sign/reopen_miniapp.py "$INSTANCE":/tmp/reopen_miniapp.py >/dev/null 2>&1
+    docker exec -e DISPLAY=:1 "$INSTANCE" python3 /tmp/reopen_miniapp.py --loose >>"$LOG" 2>&1
+    RC=$?
+    # --loose 的语义：0=已打开；4=点过候选但无法用窗口标题确认（界面形态可能变了）；3=没点到
+    [ "$RC" = "0" ] || log "重开脚本返回 $RC（0=已开 / 4=点过待 appId 复核 / 3=没点到）"
+    sleep 6
+    APPID="$(probe_appid)"
+    case "$APPID" in
+      *"$APPID_EXPECT"*) log "重开成功（appId=$APPID）" ;;
+      *) die "自动重开失败：appId 复核未命中（当前=${APPID:-无}，重开脚本 RC=$RC）。看 shots/reopen_*.png；目标号是「辣可可现炒黄牛肉i」" ;;
+    esac
+    ;;
+esac
 
 # --ensure-only：只做保活（自检 + 小程序在线/重开），不签到。适合高频跑的保活任务。
 if [ "${1:-}" = "--ensure-only" ]; then
