@@ -128,6 +128,10 @@ docker exec <实例容器名> sh -c 'cat /etc/machine-id; hostname; \
 微信窗口里：搜索 **辣可可甄选** → 打开 → 点首页横幅左下角 **「点击签到」**
 → 弹「即将打开 辣可可现炒黄牛肉」→ 允许 → 落到辣可可签到页。
 
+| 微信里搜索入口 | 首页横幅与跳转确认 |
+|---|---|
+| ![搜索打开小程序](docs/images/01-open-in-wechat.png) | ![轮播图与跳转确认](docs/images/02-banner-jump.jpg) |
+
 必须打开过：`wx.login` 的 jsCode 与 appid 绑定（实测甄选产的 code 配辣可可 mpId 一律 `invalid code`），
 只有辣可可那个小程序在运行，才能换到它的 token。
 
