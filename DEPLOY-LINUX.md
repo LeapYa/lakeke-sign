@@ -144,15 +144,22 @@ bash check_wmpf.sh <实例容器名>
 > ⚠️ **不要点面板里的「更新微信」按钮。** 它下载的是官方**不带版本号**的直链，拿到的永远是最新版；
 > 一旦新版的 WMPF 没有对应配置，hook 就挂不上。（官方 CDN 也没有带版本号的地址——实测
 > `WeChatLinux_x86_64_4.1.13.23.deb`、`4.1.13.23/…`、`versions/4.1.13.23/…` 四种命名全是 404。）
+>
+> 想把版本钉住不动、或者已经漂了，看下一节。
 
 ### 2.6 万一版本漂了怎么办
 
-| | 办法 | 说明 |
+| | 办法 | 命令 / 说明 |
 |---|---|---|
 | 1 | **偏移配置改名试挂** | 若新微信的 WMPF 只是同一个 `x.y.z` 下的不同 build，偏移**可能一模一样**。把 `addresses.25665.json` 复制成新的号试挂，1 分钟见分晓 |
-| 2 | **用旧版 deb 重装** | 微信是 `dpkg-deb -x` 解压到数据卷、**不走 apt**，所以换包即可。把 deb 放自己的静态服务/对象存储，启动实例时加 `-e WECHAT_CDN=https://<你的镜像>/weixin/Universal/Linux`（`wechat-ctl.sh` 原生支持这个变量） |
-| 3 | **自己算偏移** | 要逆向能力；或等上游社区补配置 |
+| 2 | **自己算偏移** | 本项目自带离线反解工具，一条命令：`bash auto_offsets.sh <实例容器名>`。它从实例里抠出 `WeChatAppEx`、算出 4 个偏移、判卷后装进 hook 容器的 WMPFDebugger。已在 WMPF **25665** 与 **14978** 上逐字段对上上游配置 → [offsets/README.md](offsets/README.md) |
+| 3 | **把微信钉回已知可用的旧版** | `bash fetch_wechat_deb.sh 4.1.13.23 ./wechat-cdn` 按版本下载并校验 sha256；把该目录挂到静态服务，启动实例时加 `-e WECHAT_CDN=https://<你的镜像>/weixin/Universal/Linux` |
 | 4 | **转 Windows 方案** | 上游 `frida/config/win32/` 有 **53 份**配置，linux 只有 3 份 —— Windows 抗漂移能力强得多。→ [DEPLOY.md](DEPLOY.md) |
+
+**历史安装包从哪来**：官方 CDN 只有一条不带版本号的直链（永远给最新版），但
+[Rodert/wechat-linux-versions](https://github.com/Rodert/wechat-linux-versions) 每天把官方包按版本归档成 Release，
+每个 Release 还带一份 `.sha256` 清单（清单里也有官方原始下载地址）。
+`fetch_wechat_deb.sh` 就是拿这份清单做校验的，存下来的文件名必须保持 `WeChatLinux_x86_64.deb`。
 
 **已知可用安装包**（留个记录，方便核对；项目本体不托管腾讯的安装包）：
 
@@ -164,9 +171,14 @@ deb 大小     231,359,624 字节
 sha256       b7d0f8d53e9f648bc2c77a6096a04100d008f2d9f0d3988a2a4859b5992aca0a
 ```
 
+> **微信小版本升级不一定换 WMPF**：实测官方 deb 包里，微信 Linux **4.1.13.9** 与 **4.1.13.23** 的
+> `WeChatAppEx` **字节完全相同**（都是 243,670,136 字节，sha256 都是
+> `f71c54be928b22db7389b195eb05b67000bd2f7a013f1438ea7e58b921b56d9d`），两版都用 WMPF 25665。
+> 所以小版本更新通常不影响 hook，真正要盯的是 `RadiumWMPF` 下的版本号变化。
+
 > **为什么项目里不放这个 deb**：231 MB 超过 GitHub 单文件 100 MiB 的硬上限（git 和 LFS 都放不下，
 > LFS 免费额度只有 1 GB 存储 + 1 GB/月流量），而且再分发腾讯的商业安装包有被 takedown 的风险，
-> 牵连仓库本体不值得。自己留一份在网盘/对象存储，用上面的 `WECHAT_CDN` 指过去即可。
+> 牵连仓库本体不值得。用上面的归档仓库现取即可。
 
 ## 3. 打开小程序（首次人工一次，之后由脚本自动）
 

@@ -110,10 +110,19 @@ bash check_wmpf.sh <实例容器名>
 > ⚠️ **别点面板里的「更新微信」。** 它下的是官方不带版本号的直链，永远拿最新版；新版 WMPF
 > 一旦没有对应配置，hook 就挂不上。官方 CDN 也没有带版本号的地址（四种命名实测全 404）。
 >
-> 想长期钉住版本：把已知可用的 deb 放自己的静态服务/对象存储，启动实例时加
-> `-e WECHAT_CDN=https://<你的镜像>/weixin/Universal/Linux`（`wechat-ctl.sh` 原生支持）。
+> 万一漂了，三条路（成本从低到高）：
+>
+> 1. 把最接近的配置复制成新的号试挂（同一 WMPF `x.y.z` 下不同 build，偏移可能一样）
+> 2. `bash auto_offsets.sh <实例容器名>` —— 本项目自带离线反解工具，自己算出偏移并装进
+>    WMPFDebugger（已在 WMPF 25665 与 14978 上逐字段验证）
+> 3. `bash fetch_wechat_deb.sh 4.1.13.23 ./wechat-cdn` —— 从归档仓库按版本下载并校验 sha256，
+>    把该目录挂到静态服务，启动实例时加
+>    `-e WECHAT_CDN=https://<你的镜像>/weixin/Universal/Linux`（`wechat-ctl.sh` 原生支持）
+>
 > 已知可用：微信 Linux **4.1.13.23** / WMPF **2.5.6.25665** / deb 231,359,624 字节 /
 > sha256 `b7d0f8d53e9f648bc2c77a6096a04100d008f2d9f0d3988a2a4859b5992aca0a`。
+> 实测微信小版本升级不一定换 WMPF：官方 deb 包里 4.1.13.9 与 4.1.13.23 的 `WeChatAppEx`
+> 字节完全相同（都是 WMPF 25665）。
 
 ### 3. 打开小程序（首次人工一次，之后由脚本自动）
 

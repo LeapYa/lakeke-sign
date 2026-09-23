@@ -34,7 +34,7 @@
 
 |  | 方案 | 说明 |
 |---|---|---|
-| ⭐ | **Linux 容器**（首推） | 微信 Linux 版不自动升级，WMPF 版本能钉住（25665），绕开「微信一升级偏移全失效」的老问题。→ [DEPLOY-LINUX.md](DEPLOY-LINUX.md) |
+| ⭐ | **Linux 容器**（首推） | 微信 Linux 版不自动升级，WMPF 版本能钉住（25665）；真漂了也能一条命令自己重算偏移，不用等上游。→ [DEPLOY-LINUX.md](DEPLOY-LINUX.md) |
 | ✅ | **青龙面板** | 已在用青龙的话顺手：用它现成的定时任务、环境变量、日志、通知。→ [DEPLOY-QINGLONG.md](DEPLOY-QINGLONG.md) |
 | ✅ | **Windows**（常开机器或本机） | 家里旧电脑 / Windows 云主机，或先在本机试水。→ [DEPLOY.md](DEPLOY.md) |
 | ❌ | GitHub Actions | 不可行：拿不到 jsCode（第 2 条），也撑不过 `exp`（第 1 条） |
@@ -63,6 +63,7 @@ WMPFDebugger + Frida hook 微信小程序运行时，通过 CDP 在逻辑层读 
 | [DEPLOY.md](DEPLOY.md) | 部署：Windows（常开机器 / 本机），含成本参考 |
 | [CONTAINER-OPTIONS.md](CONTAINER-OPTIONS.md) | 选容器项目时看：三个项目的设备伪装能力逐项对比 |
 | [NOTES.md](NOTES.md) | 接口、响应码、签到入口位置、参数怎么取 |
+| [offsets/README.md](offsets/README.md) | 微信升级、偏移对不上时看：自己算 WMPF 偏移的规则与验证结果 |
 | [.env.example](.env.example) | 所有配置项，复制成 `lakeke.env` 用 |
 
 ## 文件说明
@@ -99,6 +100,8 @@ WMPFDebugger + Frida hook 微信小程序运行时，通过 CDP 在逻辑层读 
 | `daily.sh` | 每日入口：自检 → 自愈 → 刷新 → 签到 → 通知；`--ensure-only` 只保活不签到 |
 | `hook_up.sh` | 重建旁挂 hook 容器并起 WMPFDebugger |
 | `check_wmpf.sh` | 校验实例的 WMPF 版本有没有对应偏移配置（只读，不影响登录态） |
+| `auto_offsets.sh` | WMPF 版本漂了时，一条命令重算偏移并装进 WMPFDebugger（引擎在 [offsets/](offsets/)） |
+| `fetch_wechat_deb.sh` | 按版本下载并校验微信 Linux 安装包，用来把微信钉在已知可用的那一版 |
 | `reopen_miniapp.py` | 小程序被关掉时自动重开（从甄选首页轮播图进） |
 | `notify.py` | 多渠道通知，按各渠道字节上限自动降级 |
 
@@ -117,9 +120,11 @@ WMPFDebugger + Frida hook 微信小程序运行时，通过 CDP 在逻辑层读 
 - 辣可可小程序没做 PC 横屏适配，界面被拉伸；功能可用，屏幕切到 1280x1024 时排版正常。
 - 首次注册会员要过一次手机号授权。若提供明文手机号可直接调注册接口，不必点界面。
 - 只在微信 Linux 4.1.13（WMPF 25665）容器 与 Windows 桌面版上实测过。
-- **WMPF 版本必须落在 WMPFDebugger 的偏移配置里**：linux 上游只有 3 份（14910 / 14978 / 25665），
-  Windows 有 53 份。装完先 `bash check_wmpf.sh <实例容器名>` 验一下；漂了怎么办见
-  [DEPLOY-LINUX.md](DEPLOY-LINUX.md) 的「2.6 万一版本漂了怎么办」。
+- **WMPF 版本要能对上偏移配置**：linux 上游只有 3 份（14910 / 14978 / 25665），Windows 有 53 份。
+  装完先 `bash check_wmpf.sh <实例容器名>` 验一下。对不上也不必干等上游——项目自带离线反解工具，
+  `bash auto_offsets.sh <实例容器名>` 一条命令自己算（已在 WMPF 25665 与 14978 上逐字段验证），
+  或者 `bash fetch_wechat_deb.sh` 把微信钉回已知可用的旧版。
+  两条路见 [DEPLOY-LINUX.md](DEPLOY-LINUX.md) 的「2.6 万一版本漂了怎么办」。
 
 ## 免责声明
 
