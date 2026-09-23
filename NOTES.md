@@ -76,6 +76,27 @@ WMPF 25715+ 上 `Network` 域不转发事件（`Network.enable` 有回复，但�
 - 多个小程序同时运行时，hook 代理会把一次 `Runtime.evaluate` 的结果**回两遍**（两个小程序
   都连着 debug server），脚本取第一份即可
 
+## 为什么必须打开「辣可可」这个小程序
+
+`wx.login()` 在**任何**小程序里都能调，但产出的 jsCode **与 appid 绑死**：哪个小程序调用的，就只能换那个小程序的会话。
+实测（`probe_code_binding.js`，收到 3 个不同 code 交叉验证）：
+
+| code 来源 | 配辣可可 mpId | 配甄选 mpId |
+|---|---|---|
+| 辣可可的 code | ✅ success | ❌ invalid code |
+| 甄选的 code ×2 | ❌ invalid code | ✅ success |
+
+所以想拿辣可可的 token，必须让**辣可可那个 appid 的小程序**处于打开状态。这也是历史 bug
+`invalid code` 的成因：code 取自甄选上下文、却用辣可可的 mpId 去换。
+
+另一个实测结论：`wx.navigateToMiniProgram`（从小程序里直接跳到另一个小程序）**不能自动化**——
+需要真实用户点击手势，程序调用返回 `navigateToMiniProgram:fail can only be invoked by user TAP gesture`。
+所以「打开辣可可」这一步只能走 UI（`reopen_miniapp.py`），两条路径都做了：
+
+- 当前是**微信主窗口** → 点搜索框 → 输入「辣可可甄选」→ 点下拉里「最近使用过的小程序」第一条
+- 当前是**甄选首页** → 点横幅左下角「点击签到」热区（1280x1024 下约 `0.191W, 0.806H`）
+  → 弹「即将打开 辣可可现炒黄牛肉」→ 点允许
+
 ## 取证工具
 
 - `capture_reqs.js`：在逻辑层给 `wx.request` 挂钩子，再 `wx.reLaunch` 触发页面重载，
