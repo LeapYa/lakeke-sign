@@ -11,6 +11,9 @@
 - ✅ **Windows 本机跑**：完全自动（微信在跑、辣可可开着即可），推荐挂计划任务
 - ✅ **常开 Windows 无人值守**：把这套搬到一台常开的机器上（家里旧电脑 / Windows 云主机），
   见 [DEPLOY.md](DEPLOY.md)
+- ✅ **Linux 服务器无人值守**：微信 Linux 版 4.0 起支持 PC 小程序，可配 WMPFDebugger 的 linux
+  偏移配置（14910 / 14978 / 25665）；Linux 版微信不自动更新，反而能把 WMPF 版本钉住，
+  见 [DEPLOY-LINUX.md](DEPLOY-LINUX.md)
 - ❌ **GitHub Actions**：已实测否掉。同一个 token 在 09-23 02:45 还返回 `200`，
   到 13:12 变成 `208 授权码错误` —— **服务端确实校验 JWT 的 exp**，
   token 活不过当天，塞进 Secret 等于废纸
