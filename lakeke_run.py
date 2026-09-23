@@ -68,9 +68,16 @@ def main():
     game_id = env.get("LAKEKE_GAMEID", "")
 
     # 会员三件套缺失时，用 /api/member/single 自动补全（不必进签到页）
+    # 参数照抄小程序页面源码 getMemberSingle()：
+    #   { gameId, gameType: SIGN(=2), thirdShopId: baseInfo.mcId }
     if not (env.get("LAKEKE_MEMBERID") and env.get("LAKEKE_CARDID")):
         print("[0/2] 补全会员信息（/api/member/single）...")
-        single = api_post(env, "/api/member/single", {})
+        single = api_post(env, "/api/member/single", {
+            "gameId": game_id,
+            "gameType": 2,
+            "thirdShopId": env.get("LAKEKE_THIRDSHOPID", ""),
+        })
+        print(f"      code={single.get('code')} msg={single.get('msg')}")
         content = single.get("content")
         if isinstance(content, str):
             try:
@@ -78,13 +85,18 @@ def main():
             except json.JSONDecodeError:
                 content = None
         if isinstance(content, dict):
-            env["LAKEKE_MEMBERID"] = content.get("id", "") or env.get("LAKEKE_MEMBERID", "")
-            env["LAKEKE_CARDID"] = content.get("cardId", "") or env.get("LAKEKE_CARDID", "")
-            env["LAKEKE_CARDNO"] = content.get("cardNo", "") or env.get("LAKEKE_CARDNO", "")
+            env["LAKEKE_MEMBERID"] = str(content.get("id", "")) or env.get("LAKEKE_MEMBERID", "")
+            env["LAKEKE_CARDID"] = str(content.get("cardId", "")) or env.get("LAKEKE_CARDID", "")
+            env["LAKEKE_CARDNO"] = str(content.get("cardNo", "")) or env.get("LAKEKE_CARDNO", "")
+            if not env.get("LAKEKE_THIRDSHOPID") and content.get("mcId"):
+                env["LAKEKE_THIRDSHOPID"] = str(content["mcId"])
             with open(env_file, "w", encoding="utf-8") as f:
                 f.write("\n".join(f"{k}={v}" for k, v in env.items() if v) + "\n")
             print(f"      会员信息已补全: memberId={'有' if env.get('LAKEKE_MEMBERID') else '无'} "
-                  f"cardId={'有' if env.get('LAKEKE_CARDID') else '无'}")
+                  f"cardId={'有' if env.get('LAKEKE_CARDID') else '无'} "
+                  f"cardNo={'有' if env.get('LAKEKE_CARDNO') else '无'}")
+        elif content is not None:
+            print(f"      content 类型为 {type(content).__name__}，未补全")
 
     print("[1/2] 查询签到详情 ...")
     detail = api_post(env, "/api/game/sign/detail", {"gameId": game_id})

@@ -18,6 +18,57 @@
   到 13:12 变成 `208 授权码错误` —— **服务端确实校验 JWT 的 exp**，
   token 活不过当天，塞进 Secret 等于废纸
 
+## Linux 容器路线：已实测跑通（含真实签到成功）
+
+不是纸上推演，是跑完的：微信 Linux 版 4.1.13（WMPF `25665`）在容器里
+
+1. 打开辣可可甄选 → 点首页轮播图 → 跳转辣可可 → 进签到页 ✓
+2. `auth_refresh_node.js` 调 `wx.login` 换新 token（110 分钟有效）✓
+3. `cdp_lakeke_ident.js` 严格按 appId+mpId 抓整组身份 ✓
+4. **新账号首次注册会员** → 注册完页面自动签到：界面显示
+   「签到成功 · 恭喜您获得 1 积分 · 已连续签到 1 天」✓
+5. 再跑 `lakeke_run.py` → `415 今日已签到` ✓
+
+### 注册会员：API 优先，不弹窗
+
+签到接口要 `memberId/cardId/cardNo`，这些只有**会员**才有。新账号要么走微信手机号授权弹窗，
+要么直接调注册接口——**后者是纯 API，零 UI**：
+
+```
+POST /crm7game-api/api/member/register
+body { mpId, openId, unionId, data:{ mobile, gameId, thirdShopId, byInviteCode } }
+```
+
+`mobile` 是**明文手机号**（加密串只在走微信弹窗那条路才需要，用
+`POST /fans/sign/decrypt/mini/wechat/phone` 解密）。所以：
+
+> 别把「包解密」和「手机号解密」搞混：`.wxapkg` 的 V1MMWX 密钥能从 AppID 推出来（所以我们
+> 能拆包）；而手机号 `encryptedData` 是用 **session_key** 加密的，session_key 只能拿
+> **AppSecret** 去 `code2Session` 换 —— AppSecret 在 wuuxiang 服务端。整个小程序包里搜不到
+> 任何 `secret`，客户端从不碰 `code2Session`/`session_key`，只把自己拿到的
+> `encryptedData`+`iv` 转交给服务端解。**所以我们不需要自己解密，也用不着 AppSecret。**
+
+| 环境变量 | 作用 |
+|---|---|
+| `LAKEKE_REGISTER_MODE` | `api`（默认，有手机号时）/ `ui` / `auto` |
+| `LAKEKE_REGISTER_PHONE` | 手机号，走 API 注册用它 |
+| `LAKEKE_REGISTER_PHONE_INDEX` | 只在走 UI 弹窗兜底时用：选第几个号码（从 1 开始）。只有一个号码时不用设 |
+
+```powershell
+python lakeke_register.py      # 已是会员则跳过；不是则按上面配置注册
+```
+
+走 UI 兜底时会调 `ui_register.py`（在容器内执行，用 `xdotool` + `ffmpeg` 截屏判位，
+不依赖 OCR）：
+
+- 弹窗识别靠**白卡宽度区间**——签到页白底是通栏（≈0.98 屏宽），弹窗白卡只有 0.3~0.95
+- 手机号列表用**已勾选旁边那颗绿色 ✓** 当锚点，按行距往上数，得出有几个号码
+- 每一步都截图到 `shots/reg_*.png`；识别不了就**报错退出，不瞎点**
+- 屏幕太矮会把弹窗按钮切掉，脚本会自动 `xrandr -s 1280x1024`
+
+> 另一个取证手段：`capture_reqs.js` 在逻辑层给 `wx.request` 挂钩子 + `wx.reLaunch` 触发页面重载，
+> 直接列出小程序真实调用的接口（比抓包省事）。
+
 ## 签到入口的位置（容易踩）
 
 签到**不在辣可可主小程序里**。真实路径是：
