@@ -13,6 +13,7 @@
 #   LAKEKE_PYTHON      Windows 侧 python 路径
 #   LAKEKE_APPID       期望的小程序 appId（默认辣可可；改了就是给别的小程序用）
 #   LAKEKE_KEEP_OPEN=1 签到后**不关**小程序（默认会关掉省内存）
+#   LAKEKE_CHAT_SEARCH=1 允许备选的「主窗口搜索」路（默认只走小程序面板搜索）
 #   通知渠道（配了哪个就发哪个，全走 notify.py，按渠道限额自动降级）：
 #     WECOM_WEBHOOK / PUSHPLUS_TOKEN / WXPUSHER_APP_TOKEN(+UIDS/TOPIC_IDS)
 #     DINGTALK_ACCESS_TOKEN(+DINGTALK_SECRET) / SMTP_HOST,PORT,USER,PASS,TO
@@ -30,6 +31,9 @@ PY="${LAKEKE_PYTHON:-C:/Users/tingjian/.workbuddy/binaries/python/envs/default/S
 NOTIFY_ALWAYS="${LAKEKE_NOTIFY_ALWAYS:-0}"
 APPID_EXPECT="${LAKEKE_APPID:-wxf8a17a14c0521576}"   # 辣可可小程序的 appId（身份判据）
 NOTIFY_PY="$WS/lakeke-sign/notify.py"
+# 只有显式设了才往容器里带（reopen_miniapp.py 默认只用面板搜索那条路）
+CHAT_SEARCH_ENV=""
+[ -n "${LAKEKE_CHAT_SEARCH:-}" ] && CHAT_SEARCH_ENV="-e LAKEKE_CHAT_SEARCH=$LAKEKE_CHAT_SEARCH"
 LOG="$WS/lakeke-sign/daily.log"
 
 log()  { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
@@ -71,7 +75,7 @@ case "$APPID" in
   *)
     log "目标小程序不在（当前 appId=${APPID:-无}），尝试自动重开"
     docker cp lakeke-sign/reopen_miniapp.py "$INSTANCE":/tmp/reopen_miniapp.py >/dev/null 2>&1
-    docker exec -e DISPLAY=:1 "$INSTANCE" python3 /tmp/reopen_miniapp.py --loose >>"$LOG" 2>&1
+    docker exec -e DISPLAY=:1 $CHAT_SEARCH_ENV "$INSTANCE" python3 /tmp/reopen_miniapp.py --loose >>"$LOG" 2>&1
     RC=$?
     # --loose 的语义：0=已打开；4=点过候选但无法用窗口标题确认（界面形态可能变了）；3=没点到
     [ "$RC" = "0" ] || log "重开脚本返回 $RC（0=已开 / 4=点过待 appId 复核 / 3=没点到）"
