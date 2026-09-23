@@ -8,9 +8,13 @@
 |  | 方案 | 说明 |
 |---|---|---|
 | ⭐ | **Linux 容器无人值守** | **首推**。微信 Linux 版不自动升级，WMPF 版本能钉住（25665），绕开「微信一升级偏移全失效」的老问题。→ [DEPLOY-LINUX.md](DEPLOY-LINUX.md) |
+| ✅ | **青龙面板** | 已在用青龙的话顺手：用它现成的定时任务、环境变量、日志、通知。→ [DEPLOY-QINGLONG.md](DEPLOY-QINGLONG.md) |
 | ✅ | 常开 Windows 无人值守 | 搬到一台常开的 Windows（家里旧电脑 / 云主机）。→ [DEPLOY.md](DEPLOY.md) |
 | ✅ | Windows 本机跑 | 适合先试水，机器开着就行 |
 | ❌ | GitHub Actions | 不可行，原因见下 |
+
+**资源占用**（实测）：内存约 **1.9 GiB**（微信实例 1.2 G 空闲 / 1.8 G 跑起小程序，hook 0.47 G，面板 0.12 G），
+磁盘约 **6 GB**；建议 **2 核 4 GiB** 起步，单核会卡。
 
 **为什么 GitHub Actions 不可行**：token 是短效 JWT，实测 110 分钟（有效期由服务端下发时决定，会变），
 且服务端确实校验 `exp`——同一个 token 在 09-23 02:45 还返回 `200`，到 13:12 就成了 `208 授权码错误`。
@@ -48,7 +52,8 @@ bash lakeke-sign/daily.sh
 
 | 文档 | 什么时候看 |
 |---|---|
-| [DEPLOY-LINUX.md](DEPLOY-LINUX.md) | **部署（首推）**：Linux 容器无人值守，含载体选型、故障对照表 |
+| [DEPLOY-LINUX.md](DEPLOY-LINUX.md) | **部署（首推）**：Linux 容器无人值守，含载体选型、资源占用、故障对照表 |
+| [DEPLOY-QINGLONG.md](DEPLOY-QINGLONG.md) | 用青龙面板调度（适合已在用青龙的人） |
 | [DEPLOY.md](DEPLOY.md) | 部署（Windows 备选）、成本参考、为什么不能用 GitHub Actions |
 | [CONTAINER-OPTIONS.md](CONTAINER-OPTIONS.md) | 选容器项目时看：三个项目的设备伪装能力逐项对比 |
 | [NOTES.md](NOTES.md) | 接口、响应码、签到入口位置、参数怎么取 |

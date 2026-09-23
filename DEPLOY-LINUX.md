@@ -14,6 +14,19 @@
 
 共同前提：**签到凭证必须在微信里现取现用**（jsCode 只能由微信客户端产生；token 1~2 小时且服务端实测校验 `exp`）。
 
+## 资源要多少（实测）
+
+| 组件 | 内存 | 磁盘（镜像） |
+|---|---|---|
+| 微信实例 `woc-wx-*` | **1.23 GiB**（空闲），跑起小程序约 1.8 GiB | 4.6 GB + 数据卷 |
+| hook 容器 `woc-hook` | 0.47 GiB | 0.94 GB（node + frida + WMPFDebugger） |
+| 面板 `woc-panel` | 0.12 GiB | 0.49 GB |
+| **合计** | **约 1.9 ~ 2.5 GiB** | **约 6 GB** |
+
+- **机器建议 2 核 4 GiB**。2 GiB 会紧张，微信实例峰值就能吃掉 2G。
+- **CPU**：实例空闲时也占 20% 左右（KasmVNC 推流 + 微信渲染），单核会卡。
+- 脚本侧（python 签到 / node 取参）内存可忽略。
+
 ## 0. 载体怎么选（先决定这个）
 
 | 载体 | 风控风险 | 成本 | 建议 |
@@ -50,10 +63,11 @@ curl -fsSLO https://raw.githubusercontent.com/Gloridust/WechatOnCloud/main/docke
 WOC_PASSWORD=<面板管理员密码>
 WOC_HTTP_PORT=36080
 WOC_SPOOF_OS=1
-# 关键：默认内存软阈值 1500MiB 太低，跑起小程序会超，看门狗会「柔和重启」实例，
+# 关键：默认软阈值 1500MiB 太低（跑起小程序实测到 1.8G），看门狗会「柔和重启」实例，
 #       而重启 = 微信掉登录（要手机确认）+ hook 容器被连坐带走
-WOC_INSTANCE_MEM_SOFT_MB=4000
-WOC_INSTANCE_MEM_HARD_MB=6000
+# 4G 机器建议 soft=2500~3000、hard=4000；soft 设成 4000 相当于把自愈关掉了
+WOC_INSTANCE_MEM_SOFT_MB=2800
+WOC_INSTANCE_MEM_HARD_MB=4000
 ```
 
 ```bash
@@ -70,7 +84,7 @@ docker compose up -d
 >   -e PORT=8080 -e WOC_DOCKER_NETWORK=woc-net \
 >   -e WOC_WECHAT_IMAGE=docker.io/gloridust/wechat-on-cloud:1.4.9 \
 >   -e PANEL_ADMIN_USER=admin -e PANEL_ADMIN_PASSWORD=<密码> \
->   -e WOC_SPOOF_OS=1 -e WOC_INSTANCE_MEM_SOFT_MB=4000 -e WOC_INSTANCE_MEM_HARD_MB=6000 \
+>   -e WOC_SPOOF_OS=1 -e WOC_INSTANCE_MEM_SOFT_MB=2800 -e WOC_INSTANCE_MEM_HARD_MB=4000 \
 >   -e TZ=Asia/Shanghai --restart unless-stopped gloridust/woc-panel:latest
 > ```
 

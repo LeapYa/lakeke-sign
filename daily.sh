@@ -65,6 +65,12 @@ if ! cdp '"1"' >/dev/null 2>&1; then
 fi
 log "小程序在线"
 
+# --ensure-only：只做保活（自检 + 小程序在线/重开），不签到。适合高频跑的保活任务。
+if [ "${1:-}" = "--ensure-only" ]; then
+  log "仅保活模式，退出（未签到）"
+  exit 0
+fi
+
 # 3. 刷新 token（未过期会自己跳过）
 docker exec "$HOOK" sh -c 'cd /work/lakeke-sign && NODE_PATH=/opt/wmpf/node_modules node auth_refresh_node.js' \
   >>"$LOG" 2>&1 || die "token 刷新失败"
