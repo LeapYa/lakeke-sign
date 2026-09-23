@@ -108,6 +108,7 @@ WMPFDebugger + Frida hook 微信小程序运行时，通过 CDP 在逻辑层读 
 | `auto_offsets.sh` | WMPF 版本漂了时，一条命令重算偏移并装进 WMPFDebugger（引擎在 [offsets/](offsets/)） |
 | `fetch_wechat_deb.sh` | 按版本下载并校验微信 Linux 安装包，用来把微信钉在已知可用的那一版 |
 | `reopen_miniapp.py` | 小程序被关掉时自动重开（小程序面板搜索 → 回车 → 点结果卡片，用窗口标题验证） |
+| `hook_patch.sh` | 给 WMPFDebugger 的 `hook.js` 补场景号（不加的话从面板搜索进来时小程序不连调试服务） |
 | `notify.py` | 多渠道通知，按各渠道字节上限自动降级 |
 
 **Windows 本机方案**

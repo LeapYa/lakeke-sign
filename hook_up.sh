@@ -22,14 +22,19 @@ docker run -d --name woc-hook \
   woc-hook:1 sleep infinity >/dev/null 2>&1
 sleep 4
 
-echo "== 3. 启动 WMPFDebugger =="
+echo "== 3. 给 hook.js 打场景号补丁（不加 1183 的话小程序不会连 9421） =="
+bash "$(dirname "$0")/hook_patch.sh" woc-hook \
+  || echo "⚠️ 补丁没打上：hook 能起，但小程序可能不接 9421（见 hook_patch.sh 顶部说明）"
+
+echo "== 4. 启动 WMPFDebugger =="
 docker exec -d woc-hook sh -c 'cd /opt/wmpf && node node_modules/ts-node/dist/bin.js src/index.ts > /tmp/wmpf.log 2>&1'
 for i in $(seq 1 10); do
   sleep 4
   if docker exec woc-hook grep -q "script loaded" /tmp/wmpf.log 2>/dev/null; then break; fi
 done
 
-echo "== 4. 结果 =="
+echo "== 5. 结果 =="
 docker exec woc-hook cat /tmp/wmpf.log 2>&1 | head -8
-echo "-- 小程序接入次数 --"
-docker exec woc-hook grep -c "miniapp" /tmp/wmpf.log 2>/dev/null || echo 0
+echo "-- 小程序接入次数（>0 才算 hook 真接管了） --"
+docker exec woc-hook grep -c "miniapp client connected" /tmp/wmpf.log 2>/dev/null || :
+echo "   若为 0：小程序还没开（正常）或场景号没打补丁（见 hook_patch.sh 顶部说明）"

@@ -241,9 +241,27 @@ docker exec woc-hook sh -c '
   cp -r /work/WMPFDebugger/node_modules/frida/build/src node_modules/frida/build/   # 见下方说明
   node -e "console.log(require(\"frida\").version)"
 '
-docker commit woc-hook woc-hook:1   # 固化，之后重建不必重装
+bash hook_patch.sh woc-hook          # 必要！见下面「场景号」那段
+docker commit woc-hook woc-hook:1   # 固化，之后重建不必重装（补丁也一起固化了）
 docker exec -d woc-hook sh -c 'cd /opt/wmpf && node node_modules/ts-node/dist/bin.js src/index.ts > /tmp/wmpf.log 2>&1'
 docker exec woc-hook tail -5 /tmp/wmpf.log   # 期望：[frida] script loaded, WMPF version: 25665
+```
+
+> **为什么必须打 `hook_patch.sh`**：`frida/hook.js` 只在**场景号白名单**内才把 scene 改写成 1101，
+> 从而打开小程序的 devtools 通道。而**从「小程序面板 → 搜索 → 结果卡片」打开小程序时场景号是 `1183`**
+> （实测微信 4.1.13.23），不在上游白名单里（上游只有 1145=搜索 / 1256=最近使用 / 1260=我的常用 …）
+> → 不改写 → 小程序**不会连 `ws://localhost:9421`** → CDP 拿不到身份、刷不了 token、签不了到。
+>
+> 现象很好认：`hook_up.sh` 最后那行「小程序接入次数」一直是 **0**，日志里也没有
+> `[miniapp] miniapp client connected`。补丁除了加 1183，还加了一行诊断日志：
+> 以后换微信版本、换入口时，用 `--debug-frida` 启动就能看到 `[hook] scene NOT in whitelist: N`，
+> 把 N 加进白名单即可：
+
+```bash
+docker exec woc-hook sh -c 'for p in $(ls /proc | grep -E "^[0-9]+$"); do [ "$(cat /proc/$p/comm)" = node ] && kill -9 $p; done'
+docker exec -d woc-hook sh -c 'cd /opt/wmpf && node node_modules/ts-node/dist/bin.js src/index.ts --debug-frida > /tmp/wmpf_dbg.log 2>&1'
+# 打开一次小程序，然后：
+docker exec woc-hook grep "scene" /tmp/wmpf_dbg.log
 ```
 
 > `npm i --ignore-scripts` 会跳过 frida 的 install 脚本，**JS 包装层不会被生成**，

@@ -66,6 +66,18 @@ node -e "require('frida'); console.log('frida OK')"
 路径里 `RadiumWMPF\` 后面那串数字就是（例：`25715`）。确认 `frida\config\win32\addresses.<版本>.json` 存在；
 没有就去 [WMPFDebugger PRs](https://github.com/evi0s/WMPFDebugger/pulls) 找，或参考项目 README 自己逆。
 
+> **顺手补一个场景号**：`frida\hook.js` 只在**场景号白名单**内才会打开小程序的 devtools 通道。
+> 从「小程序面板 → 搜索 → 结果卡片」打开小程序时场景号是 `1183`（实测微信 Linux 4.1.13.23），
+> 不在上游白名单里 → 小程序不连调试服务 → 拿不到 token。
+> 用记事本打开 `frida\hook.js`，在 `const sceneNumberArray = [...]` 里加上 `1183`；
+> 再加一行诊断（可选，方便以后换版本）：把
+> `if (!sceneNumberArray.includes(miniappScenePtr.readInt())) { return; }`
+> 改成先 `send("[hook] scene NOT in whitelist: " + miniappScenePtr.readInt());` 再 return，
+> 这样启动时带上 `--debug-frida` 就能看到真实场景号。
+>
+> Windows 上更省事的办法：**从主窗口搜索框打开小程序**（不要走小程序面板的搜索结果卡片），
+> 那样场景是「from search」，本来就在白名单里。
+
 ### 3. 装 Python 依赖并部署脚本
 
 ```powershell
