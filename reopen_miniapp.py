@@ -285,53 +285,136 @@ def click_in(wid, fx, fy, wait=0.7, what=""):
 
 # ───────────────────── 关闭窗口：先认身份，再取按钮位置 ─────────────────────
 
+def probe_close_glyph(buf, W, H, X, Y, Wd, Hd):
+    """**探测**标题栏右端最靠右的那个「紧凑字形块」（关闭键在控制组的最右），
+    返回其中心 (x, y)；没探测到返回 None。不依赖任何按钮比例坐标。
+
+    怎么探测：逐像素和**本地底色**比（同一行左边 8..16 列 + 右边 8..16 列的中位数），
+    差别大的算前景；再做 4 邻域连通域，取「面积 16..420、宽 5..30、高 5..26、
+    宽高比 0.45..2.4」的块里最靠右的那个。
+
+    为什么不用「整条条带的中位数」当底色：小程序窗口的标题栏是**整条品牌色**
+    （实测正牌是黄 250,209,78、开错的那个是暗红 141,13,25），全局底色会把
+    浅色药丸和里面的深色字形并成一大块，直接检不出来（实测：候选数 0）。
+    本地底色能穿过这类「整条有色」的标题栏。
+
+    ⚠️ 探测的**局限**（实测过，所以不能只靠它）：小程序窗口的药丸右端圆角处，
+    右侧邻居落到标题栏上，会被误判成前景，于是「最靠右的块」可能是药丸右帽
+    (1264,42) 而不是 ◎ (1250,42) —— 哪个字形是关闭键属于**语义**，
+    几个字形（··· ─ ◎ ▢ ✕）在像素上长得太像，纯视觉分不出来。
+    所以本函数只负责「落在字形上」，是关闭键这件事由 R_CLOSE_* 的实测比例确定。
+    """
+    x0, x1 = max(0, X + int(Wd * 0.86)), min(W - 1, X + Wd - 1)
+    y0, y1 = max(0, Y + max(1, int(Hd * 0.002))), min(H - 1, Y + int(Hd * 0.065))
+
+    def lum(xx, yy):
+        c = px(buf, W, xx, yy)
+        return (c[0] + c[1] + c[2]) / 3.0
+
+    fg = set()
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            nb = []
+            for d in range(8, 17):
+                for xx in (x - d, x + d):
+                    if x0 <= xx <= x1:
+                        nb.append(lum(xx, y))
+            if len(nb) < 6:
+                continue
+            nb.sort()
+            if abs(lum(x, y) - nb[len(nb) // 2]) > 40:
+                fg.add((x, y))
+    if not fg:
+        return None
+
+    seen, best = set(), None
+    for p in fg:
+        if p in seen:
+            continue
+        stack, comp = [p], []
+        seen.add(p)
+        while stack:
+            cx, cy = stack.pop()
+            comp.append((cx, cy))
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                q = (cx + dx, cy + dy)
+                if q in fg and q not in seen:
+                    seen.add(q)
+                    stack.append(q)
+        xs = [c[0] for c in comp]
+        ys = [c[1] for c in comp]
+        w, h = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+        if not (16 <= len(comp) <= 420 and 5 <= w <= 30 and 5 <= h <= 26):
+            continue
+        if not (0.45 <= w / float(h) <= 2.4):
+            continue
+        cx, cy = (min(xs) + max(xs)) // 2, (min(ys) + max(ys)) // 2
+        if best is None or cx > best[0]:
+            best = (cx, cy, w, h, len(comp))
+    return (best[0], best[1]) if best else None
+
+
+def _glyph_present(buf, W, H, x, y, box=16):
+    """候选点附近有没有「字形级」的对比（±box 的小方块里，与方块底色明显不同的像素占比）。"""
+    hist = {}
+    for yy in range(max(0, y - box), min(H, y + box + 1)):
+        for xx in range(max(0, x - box), min(W, x + box + 1)):
+            c = px(buf, W, xx, yy)
+            k = (c[0] // 24, c[1] // 24, c[2] // 24)
+            hist[k] = hist.get(k, 0) + 1
+    if not hist:
+        return False
+    k = max(hist, key=hist.get)
+    bgc = (k[0] * 24 + 12, k[1] * 24 + 12, k[2] * 24 + 12)
+    tot = diff = 0
+    for yy in range(max(0, y - box), min(H, y + box + 1)):
+        for xx in range(max(0, x - box), min(W, x + box + 1)):
+            c = px(buf, W, xx, yy)
+            tot += 1
+            if abs(c[0] - bgc[0]) + abs(c[1] - bgc[1]) + abs(c[2] - bgc[2]) > 120:
+                diff += 1
+    return tot > 0 and diff >= tot * 0.015
+
+
 def close_point(wid, W, H, kind):
-    """算出这个窗口「关闭按钮」的屏幕坐标，返回 (x, y)；判定不了返回 None。
+    """取这个窗口「关闭按钮」的屏幕坐标，返回 (x, y)；判定不了返回 None。
 
-    ⚠️ 三个必须同时成立的坐标事实（都是实测的）：
-      · 主窗口（整个微信）的 ✕ 在 (0.983W, 0.017H)，
-        面板这类微信自己的窗口的 ✕ 在 (0.979W, 0.0205H) —— **几乎重合**。
-        所以在**识别不了身份**的情况下，按比例点关闭按钮就是赌命：
-        点错了 = 把整个微信关掉。这就是下面「主窗口一律不关 + 标题叫微信必须
-        通过面板芯片校验」这两道防线存在的原因，它们先于本函数执行。
-      · 小程序窗口是自绘标题栏，最右那个 ◎ 在 (0.978W, 0.0435H)
-        （正牌与「开错的那个」两个号都量过，位置一致）。
-      · 不假设窗口在 (0,0)：坐标按窗口自身几何算（X + 宽×比例）。
+    分工（这是实测逼出来的分工，不是偷懒）：
+      · **探测负责落在字形上**：probe_close_glyph 在标题栏右端找紧凑字形块，
+        位置精确到像素级，且窗口挪动/缩放后依然有效。
+      · **测量负责「哪个字形是关闭键」**：这是语义 —— ··· ─ ◎ ▢ ✕ 在像素上几乎等价，
+        纯视觉分不出来（实测：小程序窗口里最靠右的块其实是药丸右帽，不是 ◎）。
+        所以用实测比例当**语义锚点**：小程序窗口 (0.978W, 0.0435H)、
+        面板这类微信自己的窗口 (0.979W, 0.0205H)。
+      · 探测结果**只在锚点附近（±10px）才采信**（说明它认出的确实是那个字形）；
+        太远说明认错了字形，退回锚点，但要求锚点那儿**真有字形**（对比度校验），
+        没有就是不点。
 
-    另外**点之前还要验一下那儿真有字形**：取候选点 ±16px 的小方块，
-    统计「与该方块底色明显不同」的像素占比，太低说明这个位置是纯背景
-    （界面改版了、或者窗口形态不是我们认识的那样）→ 返回 None，不点。"""
+    ⚠️ 为什么要这么小心：主窗口（整个微信）的 ✕ 在 (0.983W, 0.017H)，
+    和面板的 (0.979W, 0.0205H) 几乎重合 —— 认不出身份时按比例点就是赌命。
+    身份那两道防线在 close_window 里，先于本函数执行。
+    · 不假设窗口在 (0,0)：一切按窗口自身几何算。"""
     fx, fy = R_CLOSE_PANEL if kind == "panel" else R_CLOSE_MINIAPP
     g = geo(wid)
     try:
         X, Y, Wd, Hd = int(g["X"]), int(g["Y"]), int(g["WIDTH"]), int(g["HEIGHT"])
     except (KeyError, ValueError):
         return None
-    x, y = X + int(Wd * fx), Y + int(Hd * fy)
-    if not (0 <= x < W and 0 <= y < H):
+    hx, hy = X + int(Wd * fx), Y + int(Hd * fy)          # 语义锚点
+    if not (0 <= hx < W and 0 <= hy < H):
         return None
     buf = grab(W, H)
-    hist = {}
-    for yy in range(max(0, y - 16), min(H, y + 17)):
-        for xx in range(max(0, x - 16), min(W, x + 17)):
-            c = px(buf, W, xx, yy)
-            k = (c[0] // 24, c[1] // 24, c[2] // 24)
-            hist[k] = hist.get(k, 0) + 1
-    if not hist:
-        return None
-    k = max(hist, key=hist.get)
-    bgc = (k[0] * 24 + 12, k[1] * 24 + 12, k[2] * 24 + 12)
-    tot = diff = 0
-    for yy in range(max(0, y - 16), min(H, y + 17)):
-        for xx in range(max(0, x - 16), min(W, x + 17)):
-            c = px(buf, W, xx, yy)
-            tot += 1
-            if abs(c[0] - bgc[0]) + abs(c[1] - bgc[1]) + abs(c[2] - bgc[2]) > 120:
-                diff += 1
-    if tot == 0 or diff < tot * 0.015:
-        print("[reopen] ⚠️ %s 的关闭按钮位置 (%d,%d) 附近没有字形（界面变了？）→ 不点" % (wid, x, y))
-        return None
-    return (x, y)
+    cand = probe_close_glyph(buf, W, H, X, Y, Wd, Hd)
+    if cand and abs(cand[0] - hx) <= 10 and abs(cand[1] - hy) <= 10:
+        if _glyph_present(buf, W, H, cand[0], cand[1]):
+            if (cand[0], cand[1]) != (hx, hy):
+                print("[reopen] 探测到关闭字形 (%d,%d)（语义锚点 %d,%d）" % (cand[0], cand[1], hx, hy))
+            return cand
+    if _glyph_present(buf, W, H, hx, hy):
+        print("[reopen] 探测没给出可信字形，退回语义锚点 (%d,%d)" % (hx, hy))
+        return (hx, hy)
+    print("[reopen] ⚠️ %s 的关闭按钮位置 (%d,%d) 附近没有字形（界面变了？）→ 不点" % (wid, hx, hy))
+    return None
 
 
 def close_window(wid, W=None, H=None, kind=None):
