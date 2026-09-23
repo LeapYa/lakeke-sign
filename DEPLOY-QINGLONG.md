@@ -139,7 +139,7 @@ bash check_wmpf.sh <实例容器名>
 | ![搜索打开小程序](docs/images/01-open-in-wechat.png) | ![轮播图与跳转确认](docs/images/02-banner-jump.jpg) |
 
 `wx.login` 的 jsCode 与 appid 绑定，只有辣可可那个小程序在运行，才能换到它的 token。
-之后被关掉也没关系，`reopen_miniapp.py` 会自动重开（保活任务会调它）。
+签到完 `daily.sh` 会**主动把它关掉**（省内存，见下节），下次签到再自动打开 —— 不用你管。
 
 ### 4. 把脚本放到青龙的脚本目录
 
@@ -279,10 +279,13 @@ WECOM_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx
 | 名称 | 命令 | 定时规则 |
 |---|---|---|
 | 辣可可签到 | `bash /ql/data/scripts/lakeke-sign/daily.sh` | `5 8 * * *` |
-| 辣可可保活 | `bash /ql/data/scripts/lakeke-sign/daily.sh --ensure-only` | `0 */2 * * *` |
+| 辣可可保活（可选） | `bash /ql/data/scripts/lakeke-sign/daily.sh --ensure-only` | `0 */2 * * *` |
 
-保活任务只做自检与「小程序在线/重开」，不签到，可以随便高频跑。跑得勤，早上那次基本不会遇到
-小程序被关的情况。两条都先「运行一次」验证，再看任务日志。
+签到任务跑完会**关掉小程序与面板**（省内存，实测省 ~220 MB，峰值只在签到那 1~2 分钟出现），
+下次签到自己重开，多花约 1 分钟。如果你更在意这点时间，设 `LAKEKE_KEEP_OPEN=1` 让它常开。
+
+保活任务是**可选**的：它只做自检与「小程序在线/重开」，不签到。挂了它小程序就基本常驻在线
+（内存一直高位，但与上面的省内存目标相反，二选一）。两条都先「运行一次」验证，再看任务日志。
 
 ### 10. 依赖
 

@@ -169,6 +169,30 @@ docker exec woc-hook sh -c 'cd /work/lakeke-sign && NODE_PATH=/opt/wmpf/node_mod
 点了候选但没能用标题确认时返回 4（而不是 3），把最终判断权交给 appId ——
 这样将来小程序不再独立开窗（Windows 新版已经是窗口内右侧栏），也不会被误判成「打开失败」。
 
+### 内存与「用完即关」
+
+这套方案里最占内存的是**微信的小程序运行时**（`WeChatAppEx` 那一串 renderer / zygote / utility 进程）。
+所以默认策略是**用完即关**：`daily.sh` 签到后调 `reopen_miniapp.py --close` 把小程序与面板都关掉，
+下次签到再自动打开 —— 内存峰值每天只出现一次（签到那 1~2 分钟），其余时间回到低谷。
+
+实测（容器内存，`docker stats`）：
+
+| 状态 | 占用 |
+|---|---|
+| 小程序 + 面板都开着 | 2.70 GiB |
+| 只关小程序 | 2.56 GiB |
+| **小程序 + 面板都关掉** | **2.48 GiB** |
+
+关窗口一律走**微信自己的关闭按钮**（小程序窗口在 `0.978W / 0.041H`，面板窗口是标准标题栏、
+在 `0.978W / 0.020H`；`close_window()` 两个位置依次试），绝不能用 `xdotool windowclose`
+（会让微信内部状态卡死、面板再也点不开，见上文）。
+
+为什么不连微信一起关掉？那样能省更多（剩下的大头就是微信本体与 WMPF 常驻框架），
+但重启微信会让登录态回到「点一下登录」的界面、少数情况还要手机确认 ——
+无人值守时这个风险不值得冒。所以默认只关小程序。
+
+想改回常开（省掉每次约 1 分钟的重开时间，代价是内存一直高位）：`LAKEKE_KEEP_OPEN=1`。
+
 另一个实测结论：`wx.navigateToMiniProgram`（从小程序里直接跳到另一个小程序）**不能自动化**——
 需要真实用户点击手势，程序调用返回 `navigateToMiniProgram:fail can only be invoked by user TAP gesture`。
 所以「打开辣可可」这一步只能走 UI（`reopen_miniapp.py`），脚本按顺序试这几条：

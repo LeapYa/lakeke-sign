@@ -5,11 +5,14 @@
 #   Windows 计划任务：程序 bash，参数 daily.sh 的绝对路径
 #
 # 做的事：docker 引擎 → 微信实例 → 旁挂 hook → 小程序是否开着（不在就自动重开）
-#         → 刷新 token（没过期自动跳过）→ 签到 → 失败时告警
+#         → 刷新 token（没过期自动跳过）→ 签到 → 关掉小程序省内存 → 失败时告警
 #
 # 环境变量（可选）：
 #   WOC_INSTANCE       微信实例容器名，默认 woc-wx-2ada0225ca
+#   WOC_HOOK           旁挂 hook 容器名，默认 woc-hook
 #   LAKEKE_PYTHON      Windows 侧 python 路径
+#   LAKEKE_APPID       期望的小程序 appId（默认辣可可；改了就是给别的小程序用）
+#   LAKEKE_KEEP_OPEN=1 签到后**不关**小程序（默认会关掉省内存）
 #   通知渠道（配了哪个就发哪个，全走 notify.py，按渠道限额自动降级）：
 #     WECOM_WEBHOOK / PUSHPLUS_TOKEN / WXPUSHER_APP_TOKEN(+UIDS/TOPIC_IDS)
 #     DINGTALK_ACCESS_TOKEN(+DINGTALK_SECRET) / SMTP_HOST,PORT,USER,PASS,TO
@@ -105,7 +108,22 @@ case "${R:-none}" in
 esac
 log "$RMSG（R=$R）"
 
-# 5. 可选：成功也汇报一条（便于确认无人值守还在正常跑）
+# 5. 省内存：签到完把小程序与面板都关掉，下次签到由第 2 步自动重开。
+#    实测（容器内存）：都开着 2.70 GiB → 都关掉 2.48 GiB，省 ~220 MB。
+#    注意大头是微信本体与 WMPF 常驻框架（~2.4 GiB），关小程序省不掉那部分。
+#    设 LAKEKE_KEEP_OPEN=1 可保持常开（如果你更在意「每次少花 1 分钟重开」）。
+if [ "${LAKEKE_KEEP_OPEN:-0}" = "1" ]; then
+  log "LAKEKE_KEEP_OPEN=1，保留小程序不关"
+else
+  docker cp lakeke-sign/reopen_miniapp.py "$INSTANCE":/tmp/reopen_miniapp.py >/dev/null 2>&1
+  if docker exec -e DISPLAY=:1 "$INSTANCE" python3 /tmp/reopen_miniapp.py --close >>"$LOG" 2>&1; then
+    log "已关闭小程序与面板（省内存；下次签到会自动重开）"
+  else
+    log "关闭小程序失败（不影响签到结果，下次签到自己会处理）"
+  fi
+fi
+
+# 6. 可选：成功也汇报一条（便于确认无人值守还在正常跑）
 if [ "$NOTIFY_ALWAYS" = "1" ]; then
   MINFO="$("$PY" lakeke-sign/member_info.py 2>/dev/null | tail -1)"
   notify "✅ 辣可可签到" "$RMSG

@@ -102,7 +102,7 @@ WMPFDebugger + Frida hook 微信小程序运行时，通过 CDP 在逻辑层读 
 
 | 文件 | 用途 |
 |---|---|
-| `daily.sh` | 每日入口：自检 → 自愈 → 刷新 → 签到 → 通知；`--ensure-only` 只保活不签到。小程序在不在按 **appId** 判（`--probe`），与界面形态无关 |
+| `daily.sh` | 每日入口：自检 → 自愈 → 刷新 → 签到 → **关掉小程序与面板省内存** → 通知；`--ensure-only` 只保活不签到。小程序在不在按 **appId** 判（`--probe`），与界面形态无关 |
 | `hook_up.sh` | 重建旁挂 hook 容器并起 WMPFDebugger |
 | `check_wmpf.sh` | 校验实例的 WMPF 版本有没有对应偏移配置（只读，不影响登录态） |
 | `auto_offsets.sh` | WMPF 版本漂了时，一条命令重算偏移并装进 WMPFDebugger（引擎在 [offsets/](offsets/)） |

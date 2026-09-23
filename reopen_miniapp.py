@@ -27,9 +27,11 @@
     面板/小程序会再也打不开，只能重启微信。要关就点微信自己的按钮。
   · 判断不了就**不点**，存截图返回非 0
 
-用法（容器内）：python3 reopen_miniapp.py [--check] [--loose]
-退出码：0 已打开；3 没打开（截图在 /tmp/shots）；4 点过候选但无法用窗口标题确认
-        —— `--loose` 模式下如此返回，交给外层用 `cdp_eval.js --probe` 按 appId 复核。
+用法（容器内）：python3 reopen_miniapp.py [--check] [--close] [--loose]
+  --close  关掉小程序与面板（释放内存；daily.sh 签到后会调它）
+退出码：0 已打开（--close 时为已关闭）；3 没打开（截图在 /tmp/shots）；
+        4 点过候选但无法用窗口标题确认 —— `--loose` 模式下如此返回，
+        交给外层用 `cdp_eval.js --probe` 按 appId 复核。
 
 判据分两层（这层专管「点哪里」，身份确认交给 appId）
   · 本脚本的**入口定位与点击**依赖具体界面布局（见上文路径 A–F），微信改版就要跟着改；
@@ -72,7 +74,8 @@ SCAN_X = 0.28                       # 扫候选行时点行内名称文字区的
 # ── 小程序面板路径（主路径）的比例坐标，1280x1024 实测 ──
 R_RAIL_COL = (14, 52)               # 侧边栏图标列的像素范围（找按钮用）
 R_PANEL_MAGNIFIER = (0.974, 0.0625)  # 面板右上角搜索（放大镜）
-R_CLOSE_BTN = (0.978, 0.041)        # 小程序窗口标题栏最右的关闭按钮 ◎
+R_CLOSE_BTN = (0.978, 0.041)        # 自绘标题栏（小程序窗口）最右的关闭按钮 ◎
+R_CLOSE_BTN_VARIANTS = [(0.978, 0.041), (0.978, 0.020)]   # 依次尝试：小程序窗口 / 面板窗口（标准标题栏）
 
 # 兜底路径用到的比例坐标
 R_SEARCH_BOX_OLD = (0.126, 0.055)
@@ -157,10 +160,12 @@ def find_target_window():
 
 
 def close_window(wid):
-    """关掉小程序窗口。⚠️ 必须走微信**自己的**关闭按钮（标题栏最右那个 ◎），
-    不能用 `xdotool windowclose`：后者销毁了 X 窗口但微微信内部状态不复位，
+    """关掉一个微信窗口（小程序窗口 / 面板窗口）。⚠️ 必须走微信**自己的**关闭按钮，
+    不能用 `xdotool windowclose`：后者销毁了 X 窗口但微信内部状态不复位，
     之后这个小程序（面板则是整个面板）就再也点不开了，只能重启微信。
-    `···` 菜单里没有「关闭小程序」，所以只能点这个 ◎（实测有效，关完状态是干净的）。"""
+    `···` 菜单里没有「关闭小程序」，所以只能点标题栏最右那个按钮。
+    两种标题栏位置不同，依次试：小程序窗口是自绘的（✕ 约 0.041H）、
+    面板窗口是标准标题栏（✕ 约 0.020H）。"""
     run("DISPLAY=%s xdotool windowactivate %s" % (DISPLAY, wid))
     time.sleep(1.0)
     geo = run("DISPLAY=%s xdotool getwindowgeometry --shell %s" % (DISPLAY, wid))
@@ -170,15 +175,17 @@ def close_window(wid):
             w = int(line.split("=")[1])
         elif line.startswith("HEIGHT="):
             h = int(line.split("=")[1])
-    if w and h:
-        run("DISPLAY=%s xdotool mousemove %d %d; sleep 0.5; DISPLAY=%s xdotool click 1"
-            % (DISPLAY, int(w * R_CLOSE_BTN[0]), int(h * R_CLOSE_BTN[1]), DISPLAY))
-        time.sleep(4)
-    if str(wid) in dict(windows()):
-        print("[reopen] ⚠️ 没关掉 %s（不硬杀，避免微信状态卡死）" % wid)
+    if not (w and h):
         return False
-    print("[reopen] 已关闭 %s（走微信自己的 ◎）" % wid)
-    return True
+    for fx, fy in R_CLOSE_BTN_VARIANTS:
+        run("DISPLAY=%s xdotool mousemove %d %d; sleep 0.5; DISPLAY=%s xdotool click 1"
+            % (DISPLAY, int(w * fx), int(h * fy), DISPLAY))
+        time.sleep(3.5)
+        if str(wid) not in dict(windows()):
+            print("[reopen] 已关闭 %s（点在 %.3fW, %.3fH 的关闭按钮）" % (wid, fx, fy))
+            return True
+    print("[reopen] ⚠️ 没关掉 %s（不硬杀，避免微信状态卡死）" % wid)
+    return False
 
 
 # ───────────────────────── 像素判据（兜底路径用） ─────────────────────────
@@ -659,6 +666,19 @@ def open_via_zhenxuan(W, H):
 # ───────────────────────────── main ─────────────────────────────
 
 def main():
+    if "--close" in sys.argv:
+        # 签到完把小程序与面板都关掉，释放运行时内存（下次签到会自动重开）。
+        # 都走微信自己的关闭按钮 —— 绝不用 xdotool windowclose（会把微信状态搞坏）。
+        names = []
+        wid, t = find_target_window()
+        if wid and close_window(str(wid)):
+            names.append(t)
+        pw = find_panel_window()
+        if pw and close_window(str(pw)):
+            names.append("小程序面板")
+        print("[reopen] 已关闭：%s" % ("、".join(names) if names else "（本来就没开着）"))
+        return 0
+
     if "--check" in sys.argv:
         wid, t = find_target_window()
         print("[reopen] 目标窗口：%s" % (t or "（未打开）"))
