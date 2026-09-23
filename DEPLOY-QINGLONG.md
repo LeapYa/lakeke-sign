@@ -93,6 +93,28 @@ docker exec <实例容器名> sh -c 'cat /etc/machine-id; hostname; \
   cat /sys/class/net/eth0/address; grep PRETTY_NAME /etc/os-release'
 ```
 
+### 2.5 装完先验版本（不通过就别往下走）
+
+要能被 hook，**WMPF 版本必须落在 WMPFDebugger 的 linux 偏移配置里** —— 上游目前只有三份：
+`addresses.14910.json` / `14978` / `25665`（分别对应 WMPF 1.4.9.10 / 1.4.9.78 / **2.5.6.65**）。
+
+配置文件名 = `addresses.<WMPF 去掉点>+<build>.json`。**要看的是 WMPF 版本，不是微信版本号。**
+
+```bash
+bash check_wmpf.sh <实例容器名>
+```
+
+看到 `[OK]` 再继续。看到 `[FAIL]` 先别往下走——按它给的选项处理（最省事的是把最接近的配置
+改名试挂，同一 WMPF `x.y.z` 下不同 build 的偏移可能一样）。
+
+> ⚠️ **别点面板里的「更新微信」。** 它下的是官方不带版本号的直链，永远拿最新版；新版 WMPF
+> 一旦没有对应配置，hook 就挂不上。官方 CDN 也没有带版本号的地址（四种命名实测全 404）。
+>
+> 想长期钉住版本：把已知可用的 deb 放自己的静态服务/对象存储，启动实例时加
+> `-e WECHAT_CDN=https://<你的镜像>/weixin/Universal/Linux`（`wechat-ctl.sh` 原生支持）。
+> 已知可用：微信 Linux **4.1.13.23** / WMPF **2.5.6.25665** / deb 231,359,624 字节 /
+> sha256 `b7d0f8d53e9f648bc2c77a6096a04100d008f2d9f0d3988a2a4859b5992aca0a`。
+
 ### 3. 打开小程序（首次人工一次，之后由脚本自动）
 
 微信窗口里搜 **辣可可甄选** → 打开 → 点首页横幅左下角 **「点击签到」**

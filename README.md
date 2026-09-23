@@ -98,6 +98,7 @@ WMPFDebugger + Frida hook 微信小程序运行时，通过 CDP 在逻辑层读 
 |---|---|
 | `daily.sh` | 每日入口：自检 → 自愈 → 刷新 → 签到 → 通知；`--ensure-only` 只保活不签到 |
 | `hook_up.sh` | 重建旁挂 hook 容器并起 WMPFDebugger |
+| `check_wmpf.sh` | 校验实例的 WMPF 版本有没有对应偏移配置（只读，不影响登录态） |
 | `reopen_miniapp.py` | 小程序被关掉时自动重开（从甄选首页轮播图进） |
 | `notify.py` | 多渠道通知，按各渠道字节上限自动降级 |
 
@@ -116,6 +117,9 @@ WMPFDebugger + Frida hook 微信小程序运行时，通过 CDP 在逻辑层读 
 - 辣可可小程序没做 PC 横屏适配，界面被拉伸；功能可用，屏幕切到 1280x1024 时排版正常。
 - 首次注册会员要过一次手机号授权。若提供明文手机号可直接调注册接口，不必点界面。
 - 只在微信 Linux 4.1.13（WMPF 25665）容器 与 Windows 桌面版上实测过。
+- **WMPF 版本必须落在 WMPFDebugger 的偏移配置里**：linux 上游只有 3 份（14910 / 14978 / 25665），
+  Windows 有 53 份。装完先 `bash check_wmpf.sh <实例容器名>` 验一下；漂了怎么办见
+  [DEPLOY-LINUX.md](DEPLOY-LINUX.md) 的「2.6 万一版本漂了怎么办」。
 
 ## 免责声明
 

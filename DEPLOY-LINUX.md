@@ -120,6 +120,54 @@ docker exec <实例容器名> sh -c 'cat /etc/machine-id; hostname; \
   cat /sys/class/net/eth0/address; grep PRETTY_NAME /etc/os-release'
 ```
 
+### 2.5 装完先验版本（不通过就别往下走）
+
+微信本体是**手动装包、不自动更新**，但要能被 hook，**WMPF 版本必须落在 WMPFDebugger 的
+linux 偏移配置里** —— 上游目前只有三份：
+
+| 上游配置 `frida/config/linux/` | 对应 WMPF | 对应微信 Linux |
+|---|---|---|
+| `addresses.14910.json` | 1.4.9.10 | 早期 4.0.x |
+| `addresses.14978.json` | 1.4.9.78 | 4.0.x |
+| `addresses.25665.json` | **2.5.6.65** | **4.1.13.23（实测可用）** |
+
+配置文件名 = `addresses.<WMPF 去掉点>+<build>.json`。**要看的是 WMPF 版本，不是微信版本号。**
+
+一条命令验完：
+
+```bash
+bash check_wmpf.sh <实例容器名>
+```
+
+看到 `[OK] WMPF 25665 有对应偏移配置` 再继续；看到 `[FAIL]` 先别往下走，按它给的四个选项处理。
+
+> ⚠️ **不要点面板里的「更新微信」按钮。** 它下载的是官方**不带版本号**的直链，拿到的永远是最新版；
+> 一旦新版的 WMPF 没有对应配置，hook 就挂不上。（官方 CDN 也没有带版本号的地址——实测
+> `WeChatLinux_x86_64_4.1.13.23.deb`、`4.1.13.23/…`、`versions/4.1.13.23/…` 四种命名全是 404。）
+
+### 2.6 万一版本漂了怎么办
+
+| | 办法 | 说明 |
+|---|---|---|
+| 1 | **偏移配置改名试挂** | 若新微信的 WMPF 只是同一个 `x.y.z` 下的不同 build，偏移**可能一模一样**。把 `addresses.25665.json` 复制成新的号试挂，1 分钟见分晓 |
+| 2 | **用旧版 deb 重装** | 微信是 `dpkg-deb -x` 解压到数据卷、**不走 apt**，所以换包即可。把 deb 放自己的静态服务/对象存储，启动实例时加 `-e WECHAT_CDN=https://<你的镜像>/weixin/Universal/Linux`（`wechat-ctl.sh` 原生支持这个变量） |
+| 3 | **自己算偏移** | 要逆向能力；或等上游社区补配置 |
+| 4 | **转 Windows 方案** | 上游 `frida/config/win32/` 有 **53 份**配置，linux 只有 3 份 —— Windows 抗漂移能力强得多。→ [DEPLOY.md](DEPLOY.md) |
+
+**已知可用安装包**（留个记录，方便核对；项目本体不托管腾讯的安装包）：
+
+```
+微信 Linux   4.1.13.23
+WMPF         2.5.6.25665
+deb 文件名   WeChatLinux_x86_64.deb
+deb 大小     231,359,624 字节
+sha256       b7d0f8d53e9f648bc2c77a6096a04100d008f2d9f0d3988a2a4859b5992aca0a
+```
+
+> **为什么项目里不放这个 deb**：231 MB 超过 GitHub 单文件 100 MiB 的硬上限（git 和 LFS 都放不下，
+> LFS 免费额度只有 1 GB 存储 + 1 GB/月流量），而且再分发腾讯的商业安装包有被 takedown 的风险，
+> 牵连仓库本体不值得。自己留一份在网盘/对象存储，用上面的 `WECHAT_CDN` 指过去即可。
+
 ## 3. 打开小程序（首次人工一次，之后由脚本自动）
 
 `reopen_miniapp.py` 能自动完成这一步（停在微信主窗口就从搜索框找，停在甄选首页就点签到横幅），
@@ -262,7 +310,9 @@ crontab -e
 
 - **别手动重启实例容器**（会掉登录，要手机确认）。改配置后先看 `docker logs <面板>` 里的
   `[watchdog] 已启用 · soft=... hard=...` 是否符合预期。
-- 微信 Linux 版不自动更新，**别随便升级**；升级前先确认新版本 WMPF 有偏移配置。
+- 微信 Linux 版不自动更新，但**别点面板里的「更新微信」**，也别随便升级；升级前先确认新版本
+  WMPF 有偏移配置（`bash check_wmpf.sh <实例>`）。漂了怎么办见上面的 2.6。
+- 想长期钉住版本：把已知可用的 deb 放自己的静态服务，用 `-e WECHAT_CDN=...` 指向它。
 - 日志 `lakeke-sign/daily.log`（追加式），截图 `shots/`。
 - 备份 `lakeke.env` 与云微数据卷（`woc-data-*`），换机可直接恢复登录态。
 
