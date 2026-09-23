@@ -2,7 +2,7 @@
 """
 签到结果通知：多渠道 fan-out + 按渠道限额自动降级。
 
-设计是从 Rainyun-Qiandao 那套搬过来的（它踩过的坑这里都保留了）：
+各渠道的实测坑（都已在下面处理）：
   1. **每个渠道的成功码不一样**：PushPlus=200、WXPusher=1000、钉钉 errcode=0、企业微信 errcode=0。
      只看 HTTP 200 会误判成功。
   2. **每个渠道有内容字节上限**，超了直接报错/丢内容：
@@ -128,7 +128,7 @@ class Provider:
 
 
 def safe_truncate(content, max_bytes):
-    """按字节截断但不能把 UTF-8 汉字截半（Rainyun 那套的坑之一）"""
+    """按字节截断，且不把 UTF-8 汉字截半"""
     data = content.encode("utf-8")
     if len(data) <= max_bytes:
         return content

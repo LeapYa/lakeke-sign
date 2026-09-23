@@ -168,7 +168,7 @@ crontab -e
 
 ## 7. 通知渠道
 
-`notify.py` 多渠道 fan-out（配了哪个发哪个），搬自 Rainyun-Qiandao 那套，含它踩过的坑：
+`notify.py` 多渠道 fan-out（配了哪个发哪个）。几个实测坑：
 
 | 渠道 | 环境变量 | 关键坑 |
 |---|---|---|
