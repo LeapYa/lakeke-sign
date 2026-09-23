@@ -59,9 +59,9 @@ if ! cdp '"1"' >/dev/null 2>&1; then
   log "辣可可小程序不在，尝试自动重开"
   docker cp lakeke-sign/reopen_miniapp.py "$INSTANCE":/tmp/reopen_miniapp.py >/dev/null 2>&1
   docker exec -e DISPLAY=:1 "$INSTANCE" python3 /tmp/reopen_miniapp.py >>"$LOG" 2>&1 \
-    || log "重开脚本返回非 0（截图见 shots/reopen_*.png，可能是当前不在甄选首页）"
+    || log "重开脚本返回非 0（截图见 shots/reopen_*.png，多半是面板搜索没打开成功）"
   sleep 6
-  cdp '"1"' >/dev/null 2>&1 || die "小程序不在且自动重开失败（需人工打开辣可可甄选首页）"
+  cdp '"1"' >/dev/null 2>&1 || die "小程序不在且自动重开失败（看 shots/reopen_*.png；注意目标号是「辣可可现炒黄牛肉i」）"
 fi
 log "小程序在线"
 
