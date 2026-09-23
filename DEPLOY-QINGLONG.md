@@ -31,10 +31,17 @@ curl -fsSLO https://raw.githubusercontent.com/Gloridust/WechatOnCloud/main/docke
 
 编辑 `docker-compose.yml`：**删掉 `- /dev:/host-dev:ro`**（无摄像头时不需要，部分环境挂载会失败）。
 
-建 `.env`：
+先生成面板登录密码，**把打印出来的这串记下来**（后面登录面板要用）：
+
+```bash
+PW="woc-$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 10)"
+echo "面板密码: $PW"
+```
+
+建 `.env`（第一行填 `$PW` 的值）：
 
 ```dotenv
-WOC_PASSWORD=<面板管理员密码>
+WOC_PASSWORD=<上一步打印出来的密码>
 WOC_HTTP_PORT=36080
 WOC_SPOOF_OS=1
 # 默认软阈值 1500MiB 太低（跑起小程序实测到 1.8G），看门狗会「柔和重启」实例，
@@ -56,13 +63,27 @@ docker compose up -d
 >   -v ~/woc/data-panel:/data -v /var/run/docker.sock:/var/run/docker.sock \
 >   -e PORT=8080 -e WOC_DOCKER_NETWORK=woc-net \
 >   -e WOC_WECHAT_IMAGE=docker.io/gloridust/wechat-on-cloud:1.4.9 \
->   -e PANEL_ADMIN_USER=admin -e PANEL_ADMIN_PASSWORD=<密码> \
+>   -e PANEL_ADMIN_USER=admin -e PANEL_ADMIN_PASSWORD=<同一个密码> \
 >   -e WOC_SPOOF_OS=1 -e WOC_INSTANCE_MEM_SOFT_MB=2800 -e WOC_INSTANCE_MEM_HARD_MB=4000 \
 >   -e TZ=Asia/Shanghai --restart unless-stopped gloridust/woc-panel:latest
 > ```
 
-浏览器打开 `http://<机器IP>:36080` → admin / 密码登录 → 新建「微信实例」→ 等镜像拉完、微信自动装好
-→ 进实例 → 手机扫码登录。
+### 登录面板
+
+浏览器打开 `http://<机器IP>:36080`，用户名 `admin`、密码是上面生成的那串 → 新建「微信实例」→
+等镜像拉完、微信自动装好 → 进实例 → 手机扫码登录。
+
+**密码存在哪、忘了怎么找回**：
+
+| 情况 | 做法 |
+|---|---|
+| 正常情况 | 就在部署目录的 `.env` 里：`grep WOC_PASSWORD ~/woc/.env` |
+| `.env` 没了 | 从运行中的面板容器读：<br>`docker inspect woc-panel --format '{{range .Config.Env}}{{println .}}{{end}}' \| grep PANEL_ADMIN` |
+| 当时没设 | 官方 compose 的默认值是 `WOC_PASSWORD=wechat`（用户名 `admin`）。**不要用默认值**——这个面板能操作宿主机 Docker |
+| 想换密码 | 改 `~/woc/.env` 的 `WOC_PASSWORD` 后重建面板；微信实例在数据卷里，不受影响 |
+
+> 注意本方案有两个 `.env`，别搞混：**`~/woc/.env` 是云微面板的**（面板密码、内存阈值），
+> **`lakeke.env` 是签到脚本的**（身份、token、通知）。青龙环境变量页里配的是后者。
 
 校验设备伪装（应看到唯一 machine-id、像个人电脑的 hostname、`/.dockerenv` 已移除、真实 OUI 的 MAC）：
 
