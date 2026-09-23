@@ -35,6 +35,21 @@ frida/config/linux/addresses.25665.json
   要么参考项目 README 自己用 IDA 逆 `flue.so`（成本高）
 - Linux 版实现会在二进制里正则提取版本号，不需要你手工查
 
+## 二·补、容器化部署要选对项目（风控）
+
+如果打算用 Docker 跑（而不是裸机装），别只看 star 数，**风控对抗差别很大**：
+
+| 方案 | 风控对抗 | 说明 |
+|---|---|---|
+| **云微 WechatOnCloud**（3805★） | ⭐⭐⭐⭐⭐ | 唯一内置完整设备伪装：唯一持久 machine-id、真实 hostname、移除 `/.dockerenv`、真实 MAC、os-release 伪装 deepin；还支持「重置设备 ID」 |
+| wechat-selkies（3044★） | ⭐⭐ | 只有数据持久化，未见 machine-id/dockerenv/os-release 处理；可自己补（linuxserver 镜像支持 `/custom-cont-init.d` 钩子） |
+| ricwang/docker-wechat（990★） | ⭐ | 镜像小、微信版本新（4.1.13.23），但无设备伪装实现 |
+
+细节与逐项证据见 [CONTAINER-OPTIONS.md](CONTAINER-OPTIONS.md)。
+
+> 另外，容器方案要接我们的签到脚本，还必须能挂 frida：
+> `--cap-add=SYS_PTRACE --security-opt seccomp=unconfined`。
+
 ## 三、部署步骤（Ubuntu 22.04/24.04 x86_64，2C4G 起）
 
 ### 1. 装微信
