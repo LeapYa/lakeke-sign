@@ -11,7 +11,9 @@
 - ✅ **Windows 本机跑**：完全自动（微信在跑、辣可可开着即可），推荐挂计划任务
 - ✅ **常开 Windows 无人值守**：把这套搬到一台常开的机器上（家里旧电脑 / Windows 云主机），
   见 [DEPLOY.md](DEPLOY.md)
-- ❌ **GitHub Actions**：token 撑不到第二天，除非你自己做 token 中继
+- ❌ **GitHub Actions**：已实测否掉。同一个 token 在 09-23 02:45 还返回 `200`，
+  到 13:12 变成 `208 授权码错误` —— **服务端确实校验 JWT 的 exp**，
+  token 活不过当天，塞进 Secret 等于废纸
 
 ## 签到入口的位置（容易踩）
 

@@ -125,7 +125,17 @@ python sign_now.py; if ($LASTEXITCODE -ne 0) { <发通知> }
 - **Windows 云主机**：促销价常见 ¥50~100/年（新用户），正常续费约 ¥30~80/月，以官网实时价格为准
 - 建议配置：2 核 4GB 起，国内节点（海外节点微信登录更容易触发风控）
 
-## 五、如果「服务端不校验 JWT exp」被证实
+## 五、为什么不能用 GitHub Actions（已实测确认）
 
-那这套部署可以直接省掉：本机登录一次 → 把 token 塞进 GitHub Secret → Actions 定时签到，
-就不需要常开机器了。（该结论待验证：见 `expiry_probe.py`。）
+一开始的设想是：本机登录一次 → 把 token 塞进 GitHub Secret → Actions 每天定时签到，
+这样就不用常开机器了。**这条路已经实测否掉**：
+
+| 时间 | 用同一个 token 调 `/api/game/sign/detail` | 说明 |
+|---|---|---|
+| 09-23 02:45 | `code=200 success` | token 在有效期内（exp 04:31:37） |
+| 09-23 13:12 | `code=208 授权码错误` | 已过期 521 分钟 → **服务端确实校验 exp** |
+
+也就是说 token 活不过当天，Actions 拿到的必然是被打回的凭证。
+托管在 GitHub 上的 token 等于废纸，**只能由微信环境现取现用**，所以必须有一台开着微信的 Windows。
+
+（复现方法：`python expiry_probe.py <env文件>`，会打印 token 的 exp 与接口返回码，不打印凭证。）
