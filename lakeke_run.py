@@ -127,6 +127,8 @@ def main():
         except json.JSONDecodeError:
             pass
     print(f"      content={json.dumps(content, ensure_ascii=False)[:300]}")
+    # 供无人值守脚本解析：最后一行固定 RESULT=<code>（别用 grep code=，详情那行也是 200）
+    print(f"RESULT={code}")
     print("\n[DONE]", "签到链路可用" if code == "200" else f"返回 {code}，需人工看 msg")
 
 

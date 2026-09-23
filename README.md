@@ -69,6 +69,46 @@ python lakeke_register.py      # 已是会员则跳过；不是则按上面配�
 > 另一个取证手段：`capture_reqs.js` 在逻辑层给 `wx.request` 挂钩子 + `wx.reLaunch` 触发页面重载，
 > 直接列出小程序真实调用的接口（比抓包省事）。
 
+## 无人值守：`daily.sh`
+
+一条命令跑完「自检 → 补自愈 → 刷新 token → 签到 → 失败告警」，可挂 cron：
+
+```bash
+# Linux 常开机器
+0 8 * * * bash /path/to/lakeke-sign/daily.sh
+```
+
+```powershell
+# Windows 计划任务：程序用 bash，参数是 daily.sh 绝对路径
+```
+
+它会依次检查（任一步失败就告警退出，不会装作成功）：
+
+| 步骤 | 失败时 |
+|---|---|
+| Docker 引擎 / 微信实例容器在跑 | 告警退出 |
+| 旁挂 hook 容器在跑，且日志有 `script loaded` | 自动 `hook_up.sh` 重建 |
+| 辣可可小程序在线（CDP 查上下文） | 调 `reopen_miniapp.py` 自动重开一次 |
+| 刷新 token（未过期会自己跳过） | 告警退出 |
+| 签到 | 按 `RESULT=<code>` 判定：`200` 成功 / `415` 今日已签 / `402` 卡不可用 / `208·211` token 被拒 |
+
+可选环境变量：
+
+```
+WOC_INSTANCE=woc-wx-2ada0225ca        微信实例容器名
+LAKEKE_PYTHON=<python 绝对路径>        Windows 侧 python
+LAKEKE_NOTIFY_URL=<企业微信机器人 webhook>   失败时 POST 文本告警
+```
+
+> ⚠️ `daily.sh` 只认 `lakeke_run.py` 最后那行 `RESULT=<code>`。**别用 `grep code=` 判断成功**——
+> 「查询签到详情」那行也是 `code=200`，今天就是这么误报过一次「签到成功」而实际是 415。
+
+自动重开的边界（`reopen_miniapp.py`）：已校准的是「当前画面为**辣可可甄选首页**（能看到红色
+`每日积分签到` 轮播图）→ 点 banner → 弹跳转窗 → 点允许」这条路径，并带护栏：中段红色占比不到
+35% 就**不点**、存截图退出。如果微信停在别的界面（比如主窗口），它会明确报错让你人工切到甄选首页，
+而不是瞎点。
+
+
 ## 签到入口的位置（容易踩）
 
 签到**不在辣可可主小程序里**。真实路径是：
