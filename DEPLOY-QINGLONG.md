@@ -200,18 +200,24 @@ docker exec woc-hook sh -c '
 > 微信 Linux 4.1.13 实测是 **25665**。
 
 ```bash
-bash hook_patch.sh woc-hook           # 必要！见下面「场景号」那段
+bash hook_patch.sh woc-hook           # 必要！见下面「两个补丁」那段
 docker commit woc-hook woc-hook:1     # 固化，之后重建不必重装（补丁也一起固化了）
 docker exec -d woc-hook sh -c 'cd /opt/wmpf && node node_modules/ts-node/dist/bin.js src/index.ts > /tmp/wmpf.log 2>&1'
 docker exec woc-hook tail -5 /tmp/wmpf.log   # 期望：[frida] script loaded, WMPF version: 25665
 ```
 
-> **为什么必须打 `hook_patch.sh`**：`frida/hook.js` 只在**场景号白名单**内才把 scene 改写成 1101，
-> 从而打开小程序的 devtools 通道。而**从「小程序面板 → 搜索 → 结果卡片」打开小程序时场景号是 `1183`**
-> （实测微信 4.1.13.23），不在上游白名单里 → 小程序**不会连 `ws://localhost:9421`** →
-> CDP 拿不到身份、刷不了 token、签不了到。现象：日志里没有 `[miniapp] miniapp client connected`。
-> 补丁除了加 1183，还加了诊断日志，以后换版本/换入口时用 `--debug-frida` 就能看到
-> `[hook] scene NOT in whitelist: N`，把 N 加进白名单即可。
+> **为什么必须打 `hook_patch.sh`** —— 它给 WMPFDebugger 打两个补丁：
+>
+> **① 场景号白名单**：`frida/hook.js` 只在**场景号白名单**内才把 scene 改写成 1101，从而打开小程序的
+> devtools 通道。而**从「小程序面板 → 搜索 → 结果卡片」打开小程序时场景号是 `1183`**
+> （实测 4.1.13.23 / 4.1.1.8 / 4.1.1.4 / 4.0.0.30 上都是这个号），不在上游白名单里 →
+> 小程序**不会连 `ws://localhost:9421`** → CDP 拿不到身份、刷不了 token、签不了到。
+> 现象：日志里没有 `[miniapp] miniapp client connected`。补丁除了加 1183，还加了诊断日志，
+> 以后换版本/换入口时用 `--debug-frida` 就能看到 `[hook] scene NOT in whitelist: N`，把 N 加进白名单即可。
+>
+> **② 老版本的版本号探测回退**：上游只用 `wmpf_release/<tag>_<x.y.z>` 串取版本号（4.1.x 才有），
+> 4.0.x 及更早没有这个串 → 会直接抛 `[frida] error in find wmpf version` 起不来。补丁加了回退正则，
+> 对新版本无影响。
 
 ### 6. 抓身份写入 lakeke.env
 

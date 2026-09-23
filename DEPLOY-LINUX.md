@@ -153,7 +153,7 @@ bash check_wmpf.sh <实例容器名>
 |---|---|---|
 | 1 | **偏移配置改名试挂** | 若新微信的 WMPF 只是同一个 `x.y.z` 下的不同 build，偏移**可能一模一样**。把 `addresses.25665.json` 复制成新的号试挂，1 分钟见分晓 |
 | 2 | **自己算偏移** | 本项目自带离线反解工具，一条命令：`bash auto_offsets.sh <实例容器名>`。它从实例里抠出 `WeChatAppEx`、算出 4 个偏移、判卷后装进 hook 容器的 WMPFDebugger。已在 WMPF **25665** 与 **14978** 上逐字段对上上游配置 → [offsets/README.md](offsets/README.md) |
-| 3 | **把微信钉回已知可用的旧版** | `bash fetch_wechat_deb.sh 4.1.13.23 ./wechat-cdn` 按版本下载并校验 sha256；把该目录挂到静态服务，启动实例时加 `-e WECHAT_CDN=https://<你的镜像>/weixin/Universal/Linux` |
+| 3 | **把微信钉回已知可用的旧版** | `bash fetch_wechat_deb.sh 4.1.13.23 ./wechat-cdn` 按版本下载并校验 sha256；把该目录挂到静态服务，启动实例时加 `-e WECHAT_CDN=https://<你的镜像>/weixin/Universal/Linux`。已经跑在容器里的实例可以就地换：`bash switch_wechat_version.sh install <deb> <版本>` 解包、`bash switch_wechat_version.sh use <版本>` 秒切（符号链接 + 重启微信，随时切回） |
 | 4 | **转 Windows 方案** | 上游 `frida/config/win32/` 有 **53 份**配置，linux 只有 3 份 —— Windows 抗漂移能力强得多。→ [DEPLOY.md](DEPLOY.md) |
 
 **历史安装包从哪来**：官方 CDN 只有一条不带版本号的直链（永远给最新版），但
@@ -171,10 +171,23 @@ deb 大小     231,359,624 字节
 sha256       b7d0f8d53e9f648bc2c77a6096a04100d008f2d9f0d3988a2a4859b5992aca0a
 ```
 
-> **微信小版本升级不一定换 WMPF**：实测官方 deb 包里，微信 Linux **4.1.13.9** 与 **4.1.13.23** 的
-> `WeChatAppEx` **字节完全相同**（都是 243,670,136 字节，sha256 都是
-> `f71c54be928b22db7389b195eb05b67000bd2f7a013f1438ea7e58b921b56d9d`），两版都用 WMPF 25665。
-> 所以小版本更新通常不影响 hook，真正要盯的是 `RadiumWMPF` 下的版本号变化。
+> **微信版本号不等于 WMPF 版本号**：实测官方 deb 里，微信 **4.1.13.9** 与 **4.1.13.23** 的
+> `WeChatAppEx` **字节完全相同**（243,670,136 字节，sha256 `f71c54be928b22db7389b195eb05b67000bd2f7a013f1438ea7e58b921b56d9d`）；
+> **4.1.0.16 与 4.1.1.4** 完全相同、**4.1.1.7 与 4.1.1.8** 也完全相同。所以小版本更新经常连运行时都不换，
+> 真正要盯的是 `RadiumWMPF` 下的版本号。
+>
+> **实测过的组合**（端到端 = 打开小程序 → hook 接管 → CDP 刷出新 token → 签到接口返回 200/415）：
+>
+> | 微信版本 | WMPF | 端到端 |
+> |---|---|---|
+> | 4.1.13.23 / 4.1.13.9 | 2.5.6.**25665** | ✅ |
+> | 4.1.1.8 / 4.1.1.7 | 2.2.4.**14978** | ✅ |
+> | 4.1.1.4 / 4.1.0.16 | 2.2.4.**14910** | ✅ |
+> | 4.0.0.30 | 2.1.4.**11459** | ✅ 老版本要 `hook_patch.sh` 的版本探测回退 |
+> | 4.1.0.13 | 2.2.4.**14664** | ❌ 服务端拒绝登录，界面提示「当前微信版本过低」 |
+>
+> ⚠️ **钉旧版有下限**：4.1.0.13 已经登不进去了（微信服务端判版本过低，点登录直接弹提示）。
+> `fetch_wechat_deb.sh` 的作用是把版本钉回「已知可用且还能登录」的那一版，别钉得太久远。
 
 > **为什么项目里不放这个 deb**：231 MB 超过 GitHub 单文件 100 MiB 的硬上限（git 和 LFS 都放不下，
 > LFS 免费额度只有 1 GB 存储 + 1 GB/月流量），而且再分发腾讯的商业安装包有被 takedown 的风险，
@@ -241,21 +254,29 @@ docker exec woc-hook sh -c '
   cp -r /work/WMPFDebugger/node_modules/frida/build/src node_modules/frida/build/   # 见下方说明
   node -e "console.log(require(\"frida\").version)"
 '
-bash hook_patch.sh woc-hook          # 必要！见下面「场景号」那段
+bash hook_patch.sh woc-hook          # 必要！见下面「两个补丁」那段
 docker commit woc-hook woc-hook:1   # 固化，之后重建不必重装（补丁也一起固化了）
 docker exec -d woc-hook sh -c 'cd /opt/wmpf && node node_modules/ts-node/dist/bin.js src/index.ts > /tmp/wmpf.log 2>&1'
 docker exec woc-hook tail -5 /tmp/wmpf.log   # 期望：[frida] script loaded, WMPF version: 25665
 ```
 
-> **为什么必须打 `hook_patch.sh`**：`frida/hook.js` 只在**场景号白名单**内才把 scene 改写成 1101，
+> **为什么必须打 `hook_patch.sh`** —— 它给 WMPFDebugger 打两个补丁：
+>
+> **① 场景号白名单**：`frida/hook.js` 只在**场景号白名单**内才把 scene 改写成 1101，
 > 从而打开小程序的 devtools 通道。而**从「小程序面板 → 搜索 → 结果卡片」打开小程序时场景号是 `1183`**
-> （实测微信 4.1.13.23），不在上游白名单里（上游只有 1145=搜索 / 1256=最近使用 / 1260=我的常用 …）
-> → 不改写 → 小程序**不会连 `ws://localhost:9421`** → CDP 拿不到身份、刷不了 token、签不了到。
+> （实测 4.1.13.23 / 4.1.1.8 / 4.1.1.4 / 4.0.0.30 上都是这个号），不在上游白名单里
+> （上游只有 1145=搜索 / 1256=最近使用 / 1260=我的常用 …）→ 不改写 → 小程序**不会连 `ws://localhost:9421`**
+> → CDP 拿不到身份、刷不了 token、签不了到。
 >
 > 现象很好认：`hook_up.sh` 最后那行「小程序接入次数」一直是 **0**，日志里也没有
 > `[miniapp] miniapp client connected`。补丁除了加 1183，还加了一行诊断日志：
 > 以后换微信版本、换入口时，用 `--debug-frida` 启动就能看到 `[hook] scene NOT in whitelist: N`，
 > 把 N 加进白名单即可：
+>
+> **② 老版本的版本号探测回退**：上游只用 `wmpf_release/<tag>_<x.y.z>` 串取版本号（4.1.x 之后才有），
+> 而 4.0.x 及更早**没有这个串**——版本号是逗号开头的四段字面量 `\0,2.1.4.11459\0`。
+> 那些版本上会直接抛 `[frida] error in find wmpf version` 根本起不来。补丁加一条回退正则；
+> 对新版本没有影响（它们仍走 release 串那条路）。
 
 ```bash
 docker exec woc-hook sh -c 'for p in $(ls /proc | grep -E "^[0-9]+$"); do [ "$(cat /proc/$p/comm)" = node ] && kill -9 $p; done'
